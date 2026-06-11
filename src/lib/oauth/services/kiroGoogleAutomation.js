@@ -85,6 +85,14 @@ const TERMS_CHECKBOX_SELECTORS = [
   '#agree-policy-sso',
   'input[type="checkbox"][id*="agree" i]',
   'input[type="checkbox"][name*="agree" i]',
+  'input[type="checkbox"][id*="policy" i]',
+  'input[type="checkbox"][name*="policy" i]',
+  'input[type="checkbox"][id*="terms" i]',
+  'input[type="checkbox"][name*="terms" i]',
+  '.login-checkbox input[type="checkbox"]',
+  '[class*="checkbox"] input[type="checkbox"]',
+  '[class*="agree"] input[type="checkbox"]',
+  'input[type="checkbox"]',
 ];
 
 const PRIVACY_CONFIRM_BUTTON_SELECTORS = [
@@ -985,7 +993,7 @@ export async function runGoogleAccountAutomation({
 
   reportStep(openingStep, openingMessage);
   await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(2_000);
 
   await handleProviderLoginGate(page, reportStep);
 
@@ -1119,3 +1127,10 @@ export async function runKiroGoogleAutomation({
     onStep,
   });
 }
+
+export {
+  handleCodeBuddyRegionPage,
+  handleProviderOnboarding,
+  handleCodeBuddyStartedAuthorization,
+  isProviderPage,
+};

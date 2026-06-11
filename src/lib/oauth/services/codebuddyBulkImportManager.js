@@ -7,7 +7,13 @@ import {
   createFreshContext,
   parseKiroBulkAccounts,
 } from "./kiroBulkImportManager.js";
-import { runGoogleAccountAutomation } from "./kiroGoogleAutomation.js";
+import {
+  runGoogleAccountAutomation,
+  handleCodeBuddyRegionPage,
+  handleProviderOnboarding,
+  handleCodeBuddyStartedAuthorization,
+  isProviderPage,
+} from "./kiroGoogleAutomation.js";
 
 const CODEBUDDY_PROVIDER_ID = "codebuddy";
 const CODEBUDDY_LABEL = "CodeBuddy";
@@ -70,10 +76,15 @@ async function defaultPollForToken(providerId, deviceCode) {
 }
 
 async function captureCodeBuddyWebCookie(context) {
-  if (!context?.cookies) return null;
+  if (!context?.cookies) {
+    console.warn("[CodeBuddy] captureWebCookie: context.cookies not available");
+    return null;
+  }
 
   try {
     const cookies = await context.cookies(["https://www.codebuddy.ai", "https://codebuddy.ai"]);
+    console.log(`[CodeBuddy] captureWebCookie: found ${cookies.length} raw cookies from browser context`);
+
     const usefulCookies = cookies
       .filter((cookie) => {
         const domain = String(cookie.domain || "").replace(/^\./, "").toLowerCase();
@@ -83,12 +94,19 @@ async function captureCodeBuddyWebCookie(context) {
       .filter((cookie) => cookie.name && cookie.value)
       .sort((left, right) => String(left.name).localeCompare(String(right.name)));
 
-    if (usefulCookies.length === 0) return null;
+    if (usefulCookies.length === 0) {
+      console.warn("[CodeBuddy] captureWebCookie: no useful cookies after filtering. Raw cookie names:", cookies.map(c => `${c.name}@${c.domain}`).join(", "));
+      return null;
+    }
 
-    return usefulCookies
+    const cookieString = usefulCookies
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join("; ");
-  } catch {
+
+    console.log(`[CodeBuddy] captureWebCookie: captured ${usefulCookies.length} cookies (${cookieString.length} chars). Names: ${usefulCookies.map(c => c.name).join(", ")}`);
+    return cookieString;
+  } catch (error) {
+    console.error("[CodeBuddy] captureWebCookie error:", error.message);
     return null;
   }
 }
@@ -150,6 +168,63 @@ function createCodeBuddyPollPromise({
   })();
 }
 
+const CODEBUDDY_DASHBOARD_URL = "https://www.codebuddy.ai/home";
+const CODEBUDDY_COMPLETE_REGISTER_TIMEOUT_MS = 30_000;
+const CODEBUDDY_COMPLETE_REGISTER_POLL_MS = 1_500;
+
+async function completeCodeBuddyRegistration(page, onStep) {
+  const reportStep = (step, message) => onStep?.(step, message);
+
+  try {
+    reportStep("navigating_to_dashboard", "Navigating to CodeBuddy to complete registration");
+    await page.goto(CODEBUDDY_DASHBOARD_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForTimeout(3_000);
+
+    const startedAt = Date.now();
+    let handledAnything = false;
+    let loopCount = 0;
+
+    while (Date.now() - startedAt < CODEBUDDY_COMPLETE_REGISTER_TIMEOUT_MS) {
+      loopCount += 1;
+      if (!isProviderPage(page)) break;
+
+      const handledStarted = await handleCodeBuddyStartedAuthorization(page, reportStep);
+      if (handledStarted) {
+        handledAnything = true;
+        await page.waitForTimeout(CODEBUDDY_COMPLETE_REGISTER_POLL_MS);
+        continue;
+      }
+
+      const handledRegion = await handleCodeBuddyRegionPage(page, reportStep);
+      if (handledRegion) {
+        handledAnything = true;
+        await page.waitForTimeout(CODEBUDDY_COMPLETE_REGISTER_POLL_MS);
+        continue;
+      }
+
+      const handledOnboarding = await handleProviderOnboarding(page, reportStep, CODEBUDDY_LABEL);
+      if (handledOnboarding) {
+        handledAnything = true;
+        await page.waitForTimeout(CODEBUDDY_COMPLETE_REGISTER_POLL_MS);
+        continue;
+      }
+
+      // Nothing left to handle — page is stable
+      break;
+    }
+
+    if (handledAnything) {
+      reportStep("complete_register_done", "CodeBuddy registration completed, establishing session");
+    }
+
+    // Note: CodeBuddy web console uses Keycloak auth which is separate from the
+    // CLI OAuth flow. Web session cookies for quota tracking cannot be obtained
+    // from the OAuth token alone. Users can attach a quota cookie manually via
+    // Dashboard -> Providers -> CodeBuddy -> Quota Cookie.
+  } catch (error) {
+    reportStep("complete_register_skipped", `Could not complete registration: ${error.message}`);
+  }
+}
 export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
   constructor({
     browserLauncher,
@@ -182,6 +257,16 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
           });
           await this.persistJobSnapshot(job, { forcePreview: true });
           return;
+        }
+
+        const manualPage = account.manualSession?.page;
+        if (manualPage) {
+          this.setAccountStep(account, "completing_registration", "Completing CodeBuddy registration");
+          await this.persistJobSnapshot(job, { forcePreview: true });
+          await completeCodeBuddyRegistration(manualPage, (step, message) => {
+            this.setAccountStep(account, step, message);
+            void this.persistJobSnapshot(job, { forcePreview: false });
+          });
         }
 
         this.setAccountStep(account, "saving_connection", "Saving CodeBuddy OAuth connection");
@@ -273,6 +358,13 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
       });
 
       if (automationResult.status === "success") {
+        this.setAccountStep(account, "completing_registration", "Completing CodeBuddy registration");
+        await this.persistJobSnapshot(job, { forcePreview: true });
+        await completeCodeBuddyRegistration(page, (step, message) => {
+          this.setAccountStep(account, step, message);
+          void this.persistJobSnapshot(job, { forcePreview: false });
+        });
+
         this.setAccountStep(account, "saving_connection", "Saving CodeBuddy OAuth connection");
         await this.persistJobSnapshot(job, { forcePreview: true });
         const tokensWithCookie = await attachCodeBuddyWebCookie(context, automationResult.tokens);

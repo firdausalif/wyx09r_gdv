@@ -111,9 +111,75 @@ function KiroAutomationPanel({ providerInfo, onRefresh }) {
   );
 }
 
+function CodeBuddyBulkTokenModal({ isOpen, onClose, onSuccess }) {
+  const [tokens, setTokens] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleImport = async () => {
+    if (!tokens.trim()) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/oauth/codebuddy/bulk-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokens }),
+      });
+      const data = await res.json();
+      setResult(data);
+      if (data.success) onSuccess?.();
+    } catch (error) {
+      setResult({ error: error.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  const successMsg = result?.success
+    ? `Imported ${result.imported}/${result.total} tokens.${result.failed ? ` ${result.failed} failed.` : ""}`
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-4 text-lg font-semibold text-text-main">CodeBuddy Bulk Token Import</h3>
+        <p className="mb-3 text-xs text-text-muted">Paste access tokens, one per line. Each token will be validated and imported as a connection.</p>
+        <textarea
+          className="mb-3 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs text-text-main placeholder:text-text-muted focus:border-primary focus:outline-none"
+          rows={8}
+          placeholder={"eyJhbGciOiJSUzI1NiIs...\neyJhbGciOiJSUzI1NiIs...\neyJhbGciOiJSUzI1NiIs..."}
+          value={tokens}
+          onChange={(e) => setTokens(e.target.value)}
+          disabled={loading}
+        />
+        {result && (
+          <div className={"mb-3 rounded-lg p-3 text-xs " + (result.success ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400")}>
+            {successMsg || result.error || "Import failed"}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm text-text-muted hover:bg-border/50">Close</button>
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={loading || !tokens.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50"
+          >
+            {loading ? "Importing..." : "Import Tokens"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isBulkTokenOpen, setIsBulkTokenOpen] = useState(false);
 
   return (
     <>
@@ -133,6 +199,19 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
         </button>
         <button
           type="button"
+          onClick={() => setIsBulkTokenOpen(true)}
+          className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-text-main">
+            <span className="material-symbols-outlined text-[20px] text-primary">playlist_add</span>
+            Bulk Token Import
+          </span>
+          <span className="text-xs leading-relaxed text-text-muted">
+            Paste multiple access tokens directly. No browser needed.
+          </span>
+        </button>
+        <button
+          type="button"
           onClick={() => setIsOpen(true)}
           className="flex min-h-[112px] min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
         >
@@ -145,6 +224,11 @@ function CodeBuddyAutomationPanel({ providerInfo, onRefresh }) {
           </span>
         </button>
       </div>
+      <CodeBuddyBulkTokenModal
+        isOpen={isBulkTokenOpen}
+        onClose={() => setIsBulkTokenOpen(false)}
+        onSuccess={onRefresh}
+      />
       <BulkAccountAutomationModal
         isOpen={isBulkOpen}
         provider="codebuddy"

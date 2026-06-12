@@ -197,6 +197,29 @@ const MANUAL_ASSIST_MARKERS = [
   "try again later",
 ];
 
+const RESTRICTED_ACCOUNT_MARKERS = [
+  "restricted",
+  "account has been restricted",
+  "account is restricted",
+  "account has been suspended",
+  "account is suspended",
+  "account has been disabled",
+  "account is disabled",
+  "account has been banned",
+  "account is banned",
+  "access denied",
+  "account blocked",
+  "your account has been",
+  "violation of terms",
+  "terms of service violation",
+  "temporarily locked",
+  "permanently locked",
+  "account locked",
+  "akun dibatasi",
+  "akun diblokir",
+  "akun ditangguhkan",
+];
+
 const GOOGLE_ONBOARDING_MARKERS = [
   "welcome to your new google account",
   "selamat datang di akun google baru anda",
@@ -1038,6 +1061,14 @@ export async function runGoogleAccountAutomation({
       return {
         status: "failed_invalid_credentials",
         error: "Google rejected the supplied email or password.",
+      };
+    }
+
+    if (includesAny(text, RESTRICTED_ACCOUNT_MARKERS)) {
+      reportStep("account_restricted", "Account is restricted, suspended, or banned by the provider");
+      return {
+        status: "failed_restricted",
+        error: "Account is restricted, suspended, or banned. Skipping.",
       };
     }
 

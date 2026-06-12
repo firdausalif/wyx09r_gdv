@@ -263,7 +263,7 @@ function buildCodeBuddyUsageHeaders(accessToken, providerSpecificData = {}, uid 
 }
 
 function parseCodeBuddyUsage(payload) {
-  const data = payload?.Response?.Data || payload?.data || payload || {};
+  const data = payload?.data?.Response?.Data || payload?.Response?.Data || payload?.data || payload || {};
   const accounts = Array.isArray(data?.Accounts)
     ? data.Accounts
     : Array.isArray(data?.accounts)

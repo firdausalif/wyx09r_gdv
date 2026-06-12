@@ -72,3 +72,12 @@ ecosystem.config.*
 scripts/agSniffer/*
 gitbooks/*
 gitbook/README.md
+
+# OmO / OpenCode artifacts
+.OMO_*
+.CLEANUP_REPORT.md
+.opencode-status.md
+*-results.json
+*-test.mjs
+pw-test.mjs
+repo.tar

@@ -7,7 +7,7 @@ export async function GET(_request, { params }) {
   const { jobId } = params;
   const manager = getQoderBulkImportManager();
 
-  const job = manager.getJob(jobId);
+  const job = await manager.getJobWithPreview(jobId);
 
   if (!job) {
     return NextResponse.json({

@@ -51,7 +51,7 @@ async function defaultSaveQoderConnection({ tokens, email }) {
 
 async function defaultBrowserLauncher(proxyUrl) {
   const { chromium } = await import("playwright");
-  const launchOptions = { headless: false };
+  const launchOptions = { headless: true };
   if (proxyUrl) {
     launchOptions.proxy = { server: proxyUrl };
   }

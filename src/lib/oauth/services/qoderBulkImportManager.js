@@ -27,6 +27,7 @@ async function defaultSaveQoderConnection({ tokens, email }) {
     userId: tokens.userId || "",
     machineId: tokens.machineId || "",
     organizationId: tokens.organizationId || "",
+    planTier: tokens.planTier || "",
     loginEmail: email,
     automation: "gsuite-bulk",
   };
@@ -115,17 +116,40 @@ class QoderBulkImportManager extends KiroBulkImportManager {
       });
 
       if (automationResult.status === "success") {
-        this.setAccountStep(account, "saving_connection", "Saving Qoder connection to database");
-        await this.persistJobSnapshot(job, { forcePreview: true });
-
         const tokenData = automationResult.tokenData || automationResult;
         let displayName = "";
         let organizationId = "";
+        let planTier = "";
+
+        this.setAccountStep(account, "fetching_profile", "Fetching Qoder profile");
+        await this.persistJobSnapshot(job, { forcePreview: true });
         try {
           const userInfo = await qoderService.fetchUserInfo(tokenData.accessToken);
           displayName = userInfo.name || userInfo.email || "";
           organizationId = userInfo.organizationId || "";
         } catch {}
+
+        this.setAccountStep(account, "checking_plan", "Checking plan & activating trial via browser session");
+        await this.persistJobSnapshot(job, { forcePreview: true });
+        try {
+          const plan = await page.evaluate(async () => {
+            try {
+              const r = await fetch("https://qoder.com/api/v1/me/userplan", {
+                credentials: "include",
+                headers: { accept: "application/json" },
+              });
+              if (!r.ok) return null;
+              return r.json();
+            } catch { return null; }
+          });
+          planTier = plan?.plan_tier || plan?.plan_tier_name || "";
+          const planStatus = plan?.status || "";
+          this.setAccountStep(account, "plan_checked", `Plan: ${planTier || "unknown"} (${planStatus || "unknown"})`);
+          await this.persistJobSnapshot(job, { forcePreview: false });
+        } catch {}
+
+        this.setAccountStep(account, "saving_connection", "Saving Qoder connection to database");
+        await this.persistJobSnapshot(job, { forcePreview: true });
 
         const { connection } = await this.saveConnection({
           tokens: {
@@ -136,14 +160,16 @@ class QoderBulkImportManager extends KiroBulkImportManager {
             organizationId: organizationId || tokenData.organizationId || "",
             expireTime: tokenData.expireTime || null,
             displayName,
+            planTier,
           },
           email: account.email,
         });
 
+        const planLabel = planTier ? ` (${planTier})` : "";
         this.finalizeAccount(account, "success", {
           connectionId: connection.id,
           step: "connection_saved",
-          message: "Qoder connection saved successfully",
+          message: `Qoder connection saved successfully${planLabel}`,
         });
         account.runtimeSession = null;
         await context.close().catch(() => null);

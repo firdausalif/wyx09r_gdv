@@ -120,9 +120,11 @@ class QoderBulkImportManager extends KiroBulkImportManager {
 
         const tokenData = automationResult.tokenData || automationResult;
         let displayName = "";
+        let organizationId = "";
         try {
           const userInfo = await qoderService.fetchUserInfo(tokenData.accessToken);
           displayName = userInfo.name || userInfo.email || "";
+          organizationId = userInfo.organizationId || "";
         } catch {}
 
         const { connection } = await this.saveConnection({
@@ -131,7 +133,7 @@ class QoderBulkImportManager extends KiroBulkImportManager {
             refreshToken: tokenData.refreshToken || "",
             userId: tokenData.userId || "",
             machineId,
-            organizationId: tokenData.organizationId || "",
+            organizationId: organizationId || tokenData.organizationId || "",
             expireTime: tokenData.expireTime || null,
             displayName,
           },
@@ -226,9 +228,11 @@ class QoderBulkImportManager extends KiroBulkImportManager {
         await this.persistJobSnapshot(job, { forcePreview: true });
 
         let displayName = "";
+        let organizationId = "";
         try {
           const userInfo = await qoderService.fetchUserInfo(tokenData.accessToken);
           displayName = userInfo.name || userInfo.email || "";
+          organizationId = userInfo.organizationId || "";
         } catch {}
 
         const { connection } = await this.saveConnection({
@@ -237,7 +241,7 @@ class QoderBulkImportManager extends KiroBulkImportManager {
             refreshToken: tokenData.refreshToken || "",
             userId: tokenData.userId || "",
             machineId,
-            organizationId: tokenData.organizationId || "",
+            organizationId: organizationId || tokenData.organizationId || "",
             expireTime: tokenData.expireTime || null,
             displayName,
           },

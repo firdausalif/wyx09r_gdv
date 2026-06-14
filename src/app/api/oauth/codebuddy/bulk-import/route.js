@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCodeBuddyBulkImportManager, parseCodeBuddyBulkAccounts } from "@/lib/oauth/services/codebuddyBulkImportManager";
+import { resolveBulkImportProxy } from "@/lib/oauth/services/bulkImportProxyResolver";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +27,20 @@ export async function POST(request) {
       );
     }
 
+    const { proxyUrl, error: proxyError } = await resolveBulkImportProxy({
+      proxyPoolId: body?.proxyPoolId,
+      proxyUrl: body?.proxyUrl,
+    });
+    if (proxyError) {
+      return NextResponse.json({ error: proxyError }, { status: 400 });
+    }
+
     const manager = getCodeBuddyBulkImportManager();
     const job = await manager.startJob({
       accounts,
       concurrency: body?.concurrency,
       engine: body?.engine,
+      proxyUrl,
     });
 
     return NextResponse.json({

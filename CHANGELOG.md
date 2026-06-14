@@ -1,5 +1,53 @@
 # Unreleased
 
+## Qoder Plan Awareness
+- Executor now refuses pre-flight when the requested model has `enable: false` for the connected account, returning HTTP 403 with a pricing URL hint instead of letting the upstream return a generic `code: 112` error.
+- Free-plan Qoder accounts effectively only get `qmodel_latest` (Qwen3.7-Max) enabled; every other catalog key (`auto`, `ultimate`, `performance`, `efficient`, `qmodel`, `dmodel`, `dfmodel`, `gm51model`, `kmodel`, `mmodel`) reports `enable: false` and 403s server-side.
+- Bulk-import progress message renamed from "Checking plan & activating trial" to "Reading plan tier" — Qoder web has no Pro Trial activation flow, so the previous wording was misleading.
+
+## Provider Bulk Delete
+- Replaced the "Delete Terminal" button on the provider detail page with "Delete Selected".
+- The new bulk action removes every checkbox-selected connection regardless of status — active, rate-limited, cooldown, connection-error, and terminal accounts are all eligible.
+- Users can now multi-select connections via the existing row checkboxes ("Select visible" toggle still works) and delete them in one click.
+
+## Bulk Import Manual Session
+- "Open Manual Session" now actually opens a visible browser window. Bulk-import workers run headless by default; when a worker stalls on CAPTCHA / 2FA / recovery prompts and is marked `needs_manual`, clicking the button launches a fresh headed Chromium with the same cookies and storage state and navigates to the last URL the headless context was on.
+- Affects Kiro, Qoder, and CodeBuddy bulk-import managers.
+- The headed browser is closed automatically once the polling promise resolves (success, failure, or cancel), so no leaked windows after the followup completes.
+- Fallback: if relaunching the headed browser fails (e.g. Playwright cannot spawn), the code reverts to the previous `bringToFront` / `setWindowBounds` behavior so the click is never silently a no-op.
+
+# v0.4.81 (2026-06-14)
+
+## Qoder Auto Login
+- Added Qoder bulk auto-login via Google SSO and device flow (PKCE + poll).
+- New automation panel in Dashboard → Automation with bulk account and device OAuth options.
+- API routes: `/api/oauth/qoder/bulk-import` with job tracking, cancel, and manual session support.
+- Reuses the same Google SSO automation engine as Kiro and CodeBuddy.
+
+## Bulk Account Normalization
+- `parseKiroBulkAccounts` now supports multiple separators: `email:password`, `email|password`, and tab-separated.
+- Lines starting with `#` are treated as comments and skipped.
+- Colon separator only activates when the part before `:` contains `@` (prevents false splits on passwords with colons).
+- Updated UI placeholder and help text to reflect new format support.
+
+## Auto-Disable on Terminal Auth Errors
+- Accounts that receive 3 consecutive terminal auth errors (token expired, banned, quota exhausted) are automatically disabled (`isActive: false`).
+- New fields: `autoDisabledAt`, `autoDisabledReason`, `consecutiveAuthFailures`.
+- Failure counter resets on successful requests.
+- Dashboard shows auto-disable reason and date; re-enabling clears the auto-disable state.
+
+## Proxy for Login
+- Browser automation (Playwright) now accepts proxy configuration via the bulk import manager.
+- Qoder bulk import manager supports `proxyUrl` for HTTP/SOCKS proxy passthrough to Playwright.
+
+## Code Structure
+- Extracted `googleAutomation.js` and `codebuddyAutomation.js` as re-export modules for cleaner imports.
+- CodeBuddy bulk import manager now imports from dedicated modules instead of `kiroGoogleAutomation.js`.
+
+---
+
+# Unreleased
+
 ## Automation
 - CodeBuddy bulk automation now continues from Google login and onboarding through Access Key creation.
 - A worker is successful only after the generated Access Key is saved to the provider connection.

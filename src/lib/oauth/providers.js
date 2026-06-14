@@ -632,7 +632,7 @@ const PROVIDERS = {
       const { QoderService } = await import("@/lib/oauth/services/qoder");
       const svc = new QoderService();
       const nonce = deviceCode || extraData?._qoderNonce;
-      const verifier = codeVerifier || extraData?._qoderVerifier;
+      const verifier = codeVerifier || extraData?.codeVerifier;
       if (!nonce || !verifier) {
         return {
           ok: false,

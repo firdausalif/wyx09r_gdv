@@ -142,6 +142,23 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
     modelConfig = { ...retried, key: qoderKey };
   }
 
+  // Reject disabled models up-front. Earlier versions sent the request anyway
+  // and let upstream return 403 + a pricing URL, which surfaced as a generic
+  // "qoder error 403" with no actionable hint. We now refuse pre-flight so
+  // the caller knows exactly which model their plan can't use. Free-plan
+  // accounts typically only get qmodel_latest (Qwen3.7-Max) enabled; every
+  // other key reports enable:false and would 403 server-side.
+  if (modelConfig.enable === false) {
+    const planTier = credentials?.providerSpecificData?.planTier || "unknown";
+    const err = new Error(
+      `qoder: model "${qoderKey}" is not enabled for this account (plan: ${planTier}). ` +
+      `Try qmodel_latest, or upgrade at https://qoder.com/pricing.`,
+    );
+    err.status = 403;
+    err.code = "model_not_enabled";
+    throw err;
+  }
+
   const { messages, systemText } = normalizeMessages(body.messages || []);
   const tools = body.tools;
   const isReasoning = !!modelConfig.is_reasoning;
@@ -361,9 +378,10 @@ export class QoderExecutor extends BaseExecutor {
     try {
       ({ qoderKey, payload } = await buildQoderRequestBody({ model, body, credentials, log, proxyOptions, signal }));
     } catch (err) {
+      const status = typeof err?.status === "number" ? err.status : 400;
       const fakeResp = new Response(
-        JSON.stringify({ error: { message: err.message } }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
+        JSON.stringify({ error: { message: err.message, code: err?.code } }),
+        { status, headers: { "Content-Type": "application/json" } },
       );
       return { response: fakeResp, url, headers: {}, transformedBody: body };
     }

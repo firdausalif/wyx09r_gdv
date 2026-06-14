@@ -80,20 +80,41 @@ export function parseKiroBulkAccounts(accounts = []) {
   lines.forEach((line, index) => {
     const raw = String(line || "").trim();
     if (!raw) return;
+    // Skip comment lines
+    if (raw.startsWith("#")) return;
 
-    const [email = "", ...passwordParts] = raw.split("|");
-    const normalizedEmail = email.trim();
-    const normalizedPassword = passwordParts.join("|").trim();
+    let email = "";
+    let password = "";
 
-    if (!normalizedEmail || !normalizedPassword) {
+    if (raw.includes("|")) {
+      // Pipe separator (original behavior) — password may contain |
+      const [emailPart = "", ...passwordParts] = raw.split("|");
+      email = emailPart.trim();
+      password = passwordParts.join("|").trim();
+    } else if (raw.includes("\t")) {
+      // Tab separator (spreadsheet paste)
+      const tabIdx = raw.indexOf("\t");
+      email = raw.substring(0, tabIdx).trim();
+      password = raw.substring(tabIdx + 1).trim();
+    } else if (raw.includes(":")) {
+      // Colon separator — only if part before first : looks like email
+      const colonIdx = raw.indexOf(":");
+      const beforeColon = raw.substring(0, colonIdx).trim();
+      if (beforeColon.includes("@")) {
+        email = beforeColon;
+        password = raw.substring(colonIdx + 1).trim();
+      }
+    }
+
+    if (!email || !password) {
       invalidLines.push(index + 1);
       return;
     }
 
     parsed.push({
       line: index + 1,
-      email: normalizedEmail,
-      password: normalizedPassword,
+      email,
+      password,
     });
   });
 
@@ -240,11 +261,92 @@ export async function createFreshContext(browser) {
   return { context, page };
 }
 
-async function revealBrowserWindow(page) {
+function isHeadlessBrowser(browser) {
+  if (!browser) return true;
+  const opts = browser._options || browser._initializer || {};
+  if (typeof opts.headless === "boolean") return opts.headless;
+  return true;
+}
+
+async function relaunchAsHeaded(account) {
+  if (!account?.manualSession?.context) return false;
+  const oldContext = account.manualSession.context;
+  const oldPage = account.manualSession.page;
+  const oldBrowser = oldContext.browser?.();
+
+  let storageState = null;
+  let lastUrl = "";
+  try {
+    storageState = await oldContext.storageState();
+  } catch {
+    storageState = null;
+  }
+  try {
+    lastUrl = oldPage?.url?.() || "";
+  } catch {
+    lastUrl = "";
+  }
+
+  const { chromium } = await import("playwright");
+  let newBrowser;
+  try {
+    newBrowser = await chromium.launch({ headless: false, args: ["--start-maximized"] });
+  } catch {
+    return false;
+  }
+
+  let newContext;
+  try {
+    newContext = await newBrowser.newContext({
+      viewport: null,
+      ...(storageState ? { storageState } : {}),
+    });
+  } catch {
+    await newBrowser.close().catch(() => null);
+    return false;
+  }
+
+  const newPage = await newContext.newPage();
+  if (lastUrl) {
+    try {
+      await newPage.goto(lastUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    } catch {}
+  }
+
+  const rebind = account.manualSession.rebind;
+  account.manualSession.context = newContext;
+  account.manualSession.page = newPage;
+  account.manualSession.headedBrowser = newBrowser;
+
+  if (typeof rebind === "function") {
+    try {
+      await rebind({ context: newContext, page: newPage });
+    } catch {}
+  }
+
+  void oldContext.close().catch(() => null);
+  if (oldBrowser && oldBrowser !== newBrowser) {
+    void oldBrowser.close().catch(() => null);
+  }
+
+  return true;
+}
+
+async function revealBrowserWindow(page, { account } = {}) {
   if (!page) return false;
 
   try {
     const context = page.context?.();
+    const browser = context?.browser?.();
+
+    if (account && isHeadlessBrowser(browser)) {
+      const relaunched = await relaunchAsHeaded(account);
+      if (relaunched) {
+        await account.manualSession.page.bringToFront?.().catch(() => null);
+        return true;
+      }
+    }
+
     if (!context?.newCDPSession) {
       await page.bringToFront?.().catch(() => null);
       return true;
@@ -430,7 +532,7 @@ export class KiroBulkImportManager {
       };
     }
 
-    const opened = await revealBrowserWindow(account.manualSession.page);
+    const opened = await revealBrowserWindow(account.manualSession.page, { account });
     account.manualSession.opened = opened;
     account.manualSession.openedAt = opened
       ? (account.manualSession.openedAt || nowIso())
@@ -537,6 +639,13 @@ export class KiroBulkImportManager {
 
   async runManualFollowup(job, account, workerId, context, callbackPromise, codeVerifier) {
     const followupPromise = (async () => {
+      const closeManualResources = async () => {
+        const ms = account.manualSession;
+        const ctx = ms?.context || context;
+        const headed = ms?.headedBrowser || null;
+        if (ctx) await ctx.close().catch(() => null);
+        if (headed) await headed.close().catch(() => null);
+      };
       try {
         const callback = await callbackPromise;
         if (job.cancelRequested) {
@@ -579,9 +688,9 @@ export class KiroBulkImportManager {
         }
         await this.persistJobSnapshot(job, { forcePreview: true });
       } finally {
+        await closeManualResources();
         account.manualSession = null;
         account.runtimeSession = null;
-        await context.close().catch(() => null);
         job.manualFollowups.delete(followupPromise);
         await this.persistJobSnapshot(job, { forcePreview: true });
       }
@@ -642,6 +751,7 @@ export class KiroBulkImportManager {
           page,
           opened: false,
           openedAt: null,
+          rebind: typeof callbackPromise?.rebind === "function" ? callbackPromise.rebind : null,
         };
         this.setAccountStep(account, "awaiting_manual", "Waiting for manual completion in the browser session");
         this.finalizeAccount(account, "needs_manual", {

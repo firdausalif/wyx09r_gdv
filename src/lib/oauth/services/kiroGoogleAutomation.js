@@ -1002,72 +1002,93 @@ async function handleProviderLoginGate(page, reportStep) {
 }
 
 export function createKiroCallbackMonitor(context, page, timeoutMs = DEFAULT_MANUAL_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const trackedPages = new Set();
-    const cleanupFns = [];
-
-    const settle = (result, error = null) => {
-      if (settled) return;
-      settled = true;
-      for (const fn of cleanupFns) fn();
-      if (error) reject(error);
-      else resolve(result);
-    };
-
-    const registerPage = (trackedPage) => {
-      if (!trackedPage || trackedPages.has(trackedPage)) return;
-      trackedPages.add(trackedPage);
-
-      const onFrame = (frame) => {
-        const parsed = parseCallbackUrl(frame?.url?.() || "");
-        if (parsed) settle(parsed);
-      };
-
-      const onRequest = (request) => {
-        const parsed = parseCallbackUrl(request?.url?.() || "");
-        if (parsed) settle(parsed);
-      };
-
-      const onRequestFailed = (request) => {
-        const parsed = parseCallbackUrl(request?.url?.() || "");
-        if (parsed) settle(parsed);
-      };
-
-      const onLoadState = () => {
-        const parsed = parseCallbackUrl(trackedPage.url?.() || "");
-        if (parsed) settle(parsed);
-      };
-
-      trackedPage.on("framenavigated", onFrame);
-      trackedPage.on("request", onRequest);
-      trackedPage.on("requestfailed", onRequestFailed);
-      trackedPage.on("domcontentloaded", onLoadState);
-      trackedPage.on("load", onLoadState);
-
-      cleanupFns.push(() => {
-        trackedPage.off("framenavigated", onFrame);
-        trackedPage.off("request", onRequest);
-        trackedPage.off("requestfailed", onRequestFailed);
-        trackedPage.off("domcontentloaded", onLoadState);
-        trackedPage.off("load", onLoadState);
-      });
-
-      const current = parseCallbackUrl(trackedPage.url?.() || "");
-      if (current) settle(current);
-    };
-
-    const onPage = (newPage) => registerPage(newPage);
-    context.on("page", onPage);
-    cleanupFns.push(() => context.off("page", onPage));
-
-    registerPage(page);
-
-    const timeout = setTimeout(() => {
-      settle(null, new Error("Timed out waiting for Kiro callback"));
-    }, timeoutMs);
-    cleanupFns.push(() => clearTimeout(timeout));
+  let resolveOuter;
+  let rejectOuter;
+  const promise = new Promise((resolve, reject) => {
+    resolveOuter = resolve;
+    rejectOuter = reject;
   });
+
+  let settled = false;
+  const trackedPages = new Set();
+  const contextCleanups = new Map();
+  const timeoutHandle = setTimeout(() => {
+    settle(null, new Error("Timed out waiting for Kiro callback"));
+  }, timeoutMs);
+
+  function settle(result, error = null) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutHandle);
+    for (const fns of contextCleanups.values()) {
+      for (const fn of fns) {
+        try { fn(); } catch {}
+      }
+    }
+    contextCleanups.clear();
+    if (error) rejectOuter(error);
+    else resolveOuter(result);
+  }
+
+  function registerPage(trackedPage, ownerCleanups) {
+    if (!trackedPage || trackedPages.has(trackedPage)) return;
+    trackedPages.add(trackedPage);
+
+    const onFrame = (frame) => {
+      const parsed = parseCallbackUrl(frame?.url?.() || "");
+      if (parsed) settle(parsed);
+    };
+    const onRequest = (request) => {
+      const parsed = parseCallbackUrl(request?.url?.() || "");
+      if (parsed) settle(parsed);
+    };
+    const onRequestFailed = (request) => {
+      const parsed = parseCallbackUrl(request?.url?.() || "");
+      if (parsed) settle(parsed);
+    };
+    const onLoadState = () => {
+      const parsed = parseCallbackUrl(trackedPage.url?.() || "");
+      if (parsed) settle(parsed);
+    };
+
+    trackedPage.on("framenavigated", onFrame);
+    trackedPage.on("request", onRequest);
+    trackedPage.on("requestfailed", onRequestFailed);
+    trackedPage.on("domcontentloaded", onLoadState);
+    trackedPage.on("load", onLoadState);
+
+    ownerCleanups.push(() => {
+      trackedPage.off("framenavigated", onFrame);
+      trackedPage.off("request", onRequest);
+      trackedPage.off("requestfailed", onRequestFailed);
+      trackedPage.off("domcontentloaded", onLoadState);
+      trackedPage.off("load", onLoadState);
+    });
+
+    const current = parseCallbackUrl(trackedPage.url?.() || "");
+    if (current) settle(current);
+  }
+
+  function bind(ctx, pg) {
+    if (settled) return;
+    if (contextCleanups.has(ctx)) return;
+    const cleanups = [];
+    contextCleanups.set(ctx, cleanups);
+
+    const onPage = (newPage) => registerPage(newPage, cleanups);
+    ctx.on("page", onPage);
+    cleanups.push(() => ctx.off("page", onPage));
+
+    if (pg) registerPage(pg, cleanups);
+  }
+
+  bind(context, page);
+
+  promise.rebind = ({ context: newContext, page: newPage } = {}) => {
+    if (newContext) bind(newContext, newPage);
+  };
+
+  return promise;
 }
 
 export async function runGoogleAccountAutomation({

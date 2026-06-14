@@ -129,7 +129,7 @@ class QoderBulkImportManager extends KiroBulkImportManager {
           organizationId = userInfo.organizationId || "";
         } catch {}
 
-        this.setAccountStep(account, "checking_plan", "Checking plan & activating trial via browser session");
+        this.setAccountStep(account, "checking_plan", "Reading plan tier via browser session");
         await this.persistJobSnapshot(job, { forcePreview: true });
         try {
           const plan = await page.evaluate(async () => {
@@ -237,6 +237,13 @@ class QoderBulkImportManager extends KiroBulkImportManager {
 
   async runQoderManualFollowup(job, account, workerId, context, pollPromise, qoderService, machineId) {
     const followupPromise = (async () => {
+      const closeManualResources = async () => {
+        const ms = account.manualSession;
+        const ctx = ms?.context || context;
+        const headed = ms?.headedBrowser || null;
+        if (ctx) await ctx.close().catch(() => null);
+        if (headed) await headed.close().catch(() => null);
+      };
       try {
         const result = await pollPromise;
         if (job.cancelRequested) {
@@ -296,9 +303,9 @@ class QoderBulkImportManager extends KiroBulkImportManager {
         }
         await this.persistJobSnapshot(job, { forcePreview: true });
       } finally {
+        await closeManualResources();
         account.manualSession = null;
         account.runtimeSession = null;
-        await context.close().catch(() => null);
         job.manualFollowups.delete(followupPromise);
         await this.persistJobSnapshot(job, { forcePreview: true });
       }

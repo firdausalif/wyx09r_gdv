@@ -806,6 +806,13 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
 
   async runManualFollowup(job, account, workerId, context, successPromise) {
     const followupPromise = (async () => {
+      const closeManualResources = async () => {
+        const ms = account.manualSession;
+        const ctx = ms?.context || context;
+        const headed = ms?.headedBrowser || null;
+        if (ctx) await ctx.close().catch(() => null);
+        if (headed) await headed.close().catch(() => null);
+      };
       try {
         const result = await successPromise;
         if (job.cancelRequested) {
@@ -832,7 +839,7 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
           manager: this,
           job,
           account,
-          context,
+          context: account.manualSession?.context || context,
           page: manualPage || account.manualSession?.page,
           tokens: result.tokens,
           email: account.email,
@@ -854,9 +861,9 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
         }
         await this.persistJobSnapshot(job, { forcePreview: true });
       } finally {
+        await closeManualResources();
         account.manualSession = null;
         account.runtimeSession = null;
-        await context.close().catch(() => null);
         job.manualFollowups.delete(followupPromise);
         await this.persistJobSnapshot(job, { forcePreview: true });
       }

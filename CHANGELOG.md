@@ -1,3 +1,21 @@
+# Unreleased
+
+## Qoder Plan Awareness
+- Executor now refuses pre-flight when the requested model has `enable: false` for the connected account, returning HTTP 403 with a pricing URL hint instead of letting the upstream return a generic `code: 112` error.
+- Free-plan Qoder accounts effectively only get `qmodel_latest` (Qwen3.7-Max) enabled; every other catalog key (`auto`, `ultimate`, `performance`, `efficient`, `qmodel`, `dmodel`, `dfmodel`, `gm51model`, `kmodel`, `mmodel`) reports `enable: false` and 403s server-side.
+- Bulk-import progress message renamed from "Checking plan & activating trial" to "Reading plan tier" — Qoder web has no Pro Trial activation flow, so the previous wording was misleading.
+
+## Provider Bulk Delete
+- Replaced the "Delete Terminal" button on the provider detail page with "Delete Selected".
+- The new bulk action removes every checkbox-selected connection regardless of status — active, rate-limited, cooldown, connection-error, and terminal accounts are all eligible.
+- Users can now multi-select connections via the existing row checkboxes ("Select visible" toggle still works) and delete them in one click.
+
+## Bulk Import Manual Session
+- "Open Manual Session" now actually opens a visible browser window. Bulk-import workers run headless by default; when a worker stalls on CAPTCHA / 2FA / recovery prompts and is marked `needs_manual`, clicking the button launches a fresh headed Chromium with the same cookies and storage state and navigates to the last URL the headless context was on.
+- Affects Kiro, Qoder, and CodeBuddy bulk-import managers.
+- The headed browser is closed automatically once the polling promise resolves (success, failure, or cancel), so no leaked windows after the followup completes.
+- Fallback: if relaunching the headed browser fails (e.g. Playwright cannot spawn), the code reverts to the previous `bringToFront` / `setWindowBounds` behavior so the click is never silently a no-op.
+
 # v0.4.81 (2026-06-14)
 
 ## Qoder Auto Login

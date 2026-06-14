@@ -10,7 +10,7 @@ import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
-import { classifyConnectionStatus, CONNECTION_STATUS_FILTERS, filterConnectionByStatus, isTerminalConnectionStatus } from "@/shared/utils/connectionStatus";
+import { classifyConnectionStatus, CONNECTION_STATUS_FILTERS, filterConnectionByStatus } from "@/shared/utils/connectionStatus";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
@@ -897,7 +897,6 @@ export default function ProviderDetailPage() {
       : connections.filter((conn) => filterConnectionByStatus(conn, filter.id)).length;
     return acc;
   }, {});
-  const terminalConnections = filteredConnections.filter(isTerminalConnectionStatus);
   const effectiveSelectedConnectionIds = selectedConnectionIds.filter((id) => connections.some((conn) => conn.id === id));
   const selectedConnections = connections.filter((conn) => effectiveSelectedConnectionIds.includes(conn.id));
   const codeBuddyQuotaCookieConnectionIds = providerId === "codebuddy"
@@ -1001,21 +1000,22 @@ export default function ProviderDetailPage() {
     return applyProxyAssignments(targets);
   };
 
-  const handleDeleteTerminalConnections = () => {
-    if (terminalConnections.length === 0) return;
+  const handleDeleteSelectedConnections = () => {
+    if (selectedConnections.length === 0) return;
     setConfirmState({
-      title: "Delete Terminal Connections",
-      message: `Delete ${terminalConnections.length} terminal connection(s)? Rate-limited, cooldown, and connection-error accounts are not included.`,
+      title: "Delete Selected Connections",
+      message: `Delete ${selectedConnections.length} selected connection(s)? Any status is eligible — active, rate-limited, cooldown, connection-error, and terminal accounts will all be removed.`,
       onConfirm: async () => {
         setConfirmState(null);
-        for (const conn of terminalConnections) {
+        const targets = selectedConnections.slice();
+        for (const conn of targets) {
           try {
             await fetch(`/api/providers/${conn.id}`, { method: "DELETE" });
           } catch (error) {
-            console.log("Error deleting terminal connection:", error);
+            console.log("Error deleting connection:", error);
           }
         }
-        setSelectedConnectionIds((prev) => prev.filter((id) => !terminalConnections.some((conn) => conn.id === id)));
+        setSelectedConnectionIds((prev) => prev.filter((id) => !targets.some((conn) => conn.id === id)));
         await fetchConnections();
       },
     });
@@ -1626,14 +1626,14 @@ export default function ProviderDetailPage() {
                     Clear
                   </Button>
                 )}
-                {terminalConnections.length > 0 && (
+                {selectedConnections.length > 0 && (
                   <Button
                     size="sm"
                     variant="secondary"
                     icon="delete"
-                    onClick={handleDeleteTerminalConnections}
+                    onClick={handleDeleteSelectedConnections}
                   >
-                    Delete Terminal ({terminalConnections.length})
+                    Delete Selected ({selectedConnections.length})
                   </Button>
                 )}
               </div>

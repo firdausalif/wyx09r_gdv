@@ -1,3 +1,11 @@
+# v0.4.85 (2026-06-14)
+
+## Bulk Token Import — Flexible Formats (PR #6 by Tentoxa)
+- `/api/oauth/codebuddy/bulk-token` now accepts three line formats: `accessToken` (24h OAuth-only, backward compatible), `accessToken:refreshToken` (auto-refresh enabled), and `accessToken:refreshToken:apiKey` (365-day API-key path).
+- Smart JWT validation by structural check (presence of dots) — no false positives on valid JWTs, rejects malformed lines early.
+- Format counts returned in the API response so the dashboard can show how many entries used each path.
+- Connections imported with `apiKey` set use it as the primary credential for chat requests; the OAuth `accessToken` is still kept for upstream quota lookups.
+
 # v0.4.84-1 (2026-06-14)
 
 ## Hotfix — Donate Tier Mapping

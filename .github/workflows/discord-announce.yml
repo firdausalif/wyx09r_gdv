@@ -1,0 +1,51 @@
+name: Discord Changelog Announce
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect version bump
+        id: detect
+        run: |
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          PREV_VERSION=$(git show HEAD~1:package.json 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" 2>/dev/null || echo "")
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prev_version=$PREV_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$NEW_VERSION" != "$PREV_VERSION" ] && [ -n "$NEW_VERSION" ]; then
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "Detected version bump: $PREV_VERSION -> $NEW_VERSION"
+          else
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            echo "No version change detected (still $NEW_VERSION); skipping announce."
+          fi
+
+      - name: Build Discord payload
+        if: steps.detect.outputs.bumped == 'true'
+        id: payload
+        run: node scripts/discord-announce.mjs "${{ steps.detect.outputs.new_version }}"
+
+      - name: Send to Discord
+        if: steps.detect.outputs.bumped == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL secret is empty; skipping send."
+            exit 0
+          fi
+          curl -fsSL -X POST -H "Content-Type: application/json" \
+            --data-binary @discord-payload.json \
+            "$DISCORD_WEBHOOK_URL"

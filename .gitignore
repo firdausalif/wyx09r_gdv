@@ -51,6 +51,9 @@ source/*
 
 # opencode / development scratch directory
 .omo/
+
+# Discord announce workflow temp output
+discord-payload.json
 .cursor/*
 docs/*
 !docs/ARCHITECTURE.md

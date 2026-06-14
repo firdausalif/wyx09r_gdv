@@ -1,3 +1,15 @@
+# v0.4.86-7 (2026-06-15)
+
+## Release Highlights
+- [FIX] Codex output gak lagi truncated jadi "Bac Sek P L" (cuma 1-3 huruf per kata) — SSE peek refactor pakai single reader dan stop release/re-acquire body reader yang bocor di Node 24/undici
+- [UI] Codex CLI tool card: hapus section "Gateway" (3 button Auto Codex / Router Pool / Original) + dropdown "Pin specific Codex account". Sekarang user tinggal isi Model + Subagent Model langsung seperti tool CLI lain.
+
+## Technical Notes
+- Symptom: tiap response Codex stream keluar terpotong, kayak "Background Sekarang Process Loading" jadi "Bac Sek P L". User pikir terbatasi limit output, tapi sebenarnya stream-nya kacau di tengah jalan.
+- Root cause: `_peekSseOverloaded` di `open-sse/executors/codex.js` panggil `response.body.getReader()` untuk peek 4096 byte pertama (cek SSE error pattern), lalu `releaseLock()`, lalu di dalam `start()` callback `ReadableStream` yang baru re-acquire `upstream.getReader()` lagi. Pada Node 24/undici, kombinasi release-then-reacquire pada body fetch yang sudah dibaca sebagian kadang bikin reader kedua kehilangan offset sehingga subset byte di-emit ulang sambil sebagian byte tengah hilang. Hasilnya client SSE parser dapat event yang corrupt → terlihat sebagai output yang sangat terpotong.
+- Fix: refactor `_peekSseOverloaded` jadi single-reader lifecycle. Reader diacquire sekali di awal, peek loop pakai reader itu, kemudian replacement `ReadableStream` pakai reader yang sama (gak release/re-acquire). Kalau pattern overload kedeteksi, reader langsung di-cancel dan return tanpa replacementBody. Kalau bersih, prefix chunks di-enqueue duluan di `start()` (tanpa `getReader` ulang) lalu `pull` lanjutin baca dari reader yang sama sampai stream selesai.
+- Test coverage: 5 vitest case di `tests/unit/codex-sse-peek.test.js`. Verifikasi: byte-for-byte forwarding stream bersih, no duplikasi/drop pada banyak chunk kecil (specific regression untuk symptom "Bac Sek P L"), deteksi `server_is_overloaded` di prefix bener-bener tanpa replacementBody, body yang habis dalam window peek di-close benar, response non-OK return inert.
+
 # v0.4.86-6 (2026-06-15)
 
 ## Release Highlights

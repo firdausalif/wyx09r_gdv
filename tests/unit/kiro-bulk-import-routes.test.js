@@ -41,6 +41,10 @@ vi.mock("@/lib/oauth/services/kiroBulkImportManager", () => ({
   getKiroBulkImportManager: vi.fn(() => managerMock),
 }));
 
+vi.mock("@/lib/oauth/services/bulkImportProxyResolver", () => ({
+  resolveBulkImportProxy: vi.fn(async () => ({ proxyUrl: null, error: null })),
+}));
+
 describe("Kiro bulk import routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -83,6 +87,8 @@ describe("Kiro bulk import routes", () => {
     expect(managerMock.startJob).toHaveBeenCalledWith({
       accounts: ["user@gmail.com|pw"],
       concurrency: 6,
+      engine: undefined,
+      proxyUrl: null,
     });
     expect(response.body.job.jobId).toBe("job-1");
   });

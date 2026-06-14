@@ -1,3 +1,51 @@
+# v0.4.86-7 (2026-06-15)
+
+## Release Highlights
+- [FIX] Codex output gak lagi truncated jadi "Bac Sek P L" (cuma 1-3 huruf per kata) — SSE peek refactor pakai single reader dan stop release/re-acquire body reader yang bocor di Node 24/undici
+- [UI] Codex CLI tool card: hapus section "Gateway" (3 button Auto Codex / Router Pool / Original) + dropdown "Pin specific Codex account". Sekarang user tinggal isi Model + Subagent Model langsung seperti tool CLI lain.
+
+## Technical Notes
+- Symptom: tiap response Codex stream keluar terpotong, kayak "Background Sekarang Process Loading" jadi "Bac Sek P L". User pikir terbatasi limit output, tapi sebenarnya stream-nya kacau di tengah jalan.
+- Root cause: `_peekSseOverloaded` di `open-sse/executors/codex.js` panggil `response.body.getReader()` untuk peek 4096 byte pertama (cek SSE error pattern), lalu `releaseLock()`, lalu di dalam `start()` callback `ReadableStream` yang baru re-acquire `upstream.getReader()` lagi. Pada Node 24/undici, kombinasi release-then-reacquire pada body fetch yang sudah dibaca sebagian kadang bikin reader kedua kehilangan offset sehingga subset byte di-emit ulang sambil sebagian byte tengah hilang. Hasilnya client SSE parser dapat event yang corrupt → terlihat sebagai output yang sangat terpotong.
+- Fix: refactor `_peekSseOverloaded` jadi single-reader lifecycle. Reader diacquire sekali di awal, peek loop pakai reader itu, kemudian replacement `ReadableStream` pakai reader yang sama (gak release/re-acquire). Kalau pattern overload kedeteksi, reader langsung di-cancel dan return tanpa replacementBody. Kalau bersih, prefix chunks di-enqueue duluan di `start()` (tanpa `getReader` ulang) lalu `pull` lanjutin baca dari reader yang sama sampai stream selesai.
+- Test coverage: 5 vitest case di `tests/unit/codex-sse-peek.test.js`. Verifikasi: byte-for-byte forwarding stream bersih, no duplikasi/drop pada banyak chunk kecil (specific regression untuk symptom "Bac Sek P L"), deteksi `server_is_overloaded` di prefix bener-bener tanpa replacementBody, body yang habis dalam window peek di-close benar, response non-OK return inert.
+
+# v0.4.86-6 (2026-06-15)
+
+## Release Highlights
+- [UI] Codex CLI tool card: hapus section "Gateway" (3 button Auto Codex / Router Pool / Original) + dropdown "Pin specific Codex account". Sekarang sama seperti tool lain (Cursor/OpenCode/dll) — user tinggal isi Model + Subagent Model langsung.
+
+## Technical Notes
+- User report: Codex via CLI Tools punya 3 mode (router/pool/original) yang bikin response truncated jadi "Bac Sek P L" (cuma keluar 1-2 huruf per kata, output gak lengkap). Mode tersebut juga membingungkan untuk pemakaian normal.
+- Fix: hapus `gatewayAccounts` state, `fetchGatewayAccounts`, `applyGatewayPreset`, dan seluruh "Gateway" UI section dari `src/app/(dashboard)/dashboard/cli-tools/components/CodexToolCard.js`. Backend `parseCodexGatewayModel` di `src/sse/services/codexGateway.js` dan API `/api/cli-tools/codex-gateway/accounts` dibiarkan utuh karena masih bisa dipakai user yang explicit ngetik prefix `auto-codex`/`router/`/`original/`/`account/` di field Model — UI cuma berhenti suggest mode tersebut.
+
+# v0.4.86-5 (2026-06-15)
+
+## Release Highlights
+- [FIX] Qoder bulk login: Live Browser Preview gak stuck/freeze lagi — screenshot capture sekarang punya hard timeout 2.5s dan gak bisa poison persist queue
+- [FEAT] Bulk login (Kiro/CodeBuddy/Qoder) sekarang bisa pakai proxy via Proxy Pool dropdown atau custom URL di automation modal
+- [BACKEND] API route bulk-import nerima `proxyPoolId`/`proxyUrl` di body, plus opt-in fallback ke `settings.outboundProxyUrl` lewat flag baru `useOutboundProxyForAutomation`
+
+## Technical Notes
+- Symptom: di Qoder bulk login, Live Browser Preview kadang stuck di frame lama atau gak listening sama sekali. User harus close+reopen modal supaya preview update lagi. Kiro/CodeBuddy gak kena ini.
+- Root cause: `capturePreview()` di `kiroBulkImportManager.js` (parent class) panggil `await page.screenshot(...)` tanpa timeout. Qoder's `processAccount` jalanin `page.evaluate('https://qoder.com/api/v1/me/userplan')` sambil status masih `running` — kalau request itu lambat/hang, screenshot juga ikut blocked. Worse: `persistJobSnapshot` chain semua call lewat `job.persistPromise` yang awaitnya serial. Sekali screenshot hang, semua persist call berikutnya nyangkut. Snapshot file gak pernah ke-update lagi → modal polling baca data stale forever.
+- Why Kiro/CodeBuddy gak kena: mereka gak punya `page.evaluate` panjang waktu status masih `running`. Saving connection di Kiro lewat `socialExchange` (network call ke server kita sendiri, bukan dari dalam Playwright page).
+- Fix: (a) `capturePreview` di-race dengan `setTimeout(2500ms)`. Kalau timeout, return null tapi `lastPreview` lama dipertahankan (bukan dihapus). (b) `persistJobSnapshot` runPersist sekarang catch capturePreview reject + capturePreview itself wrap inner failure dengan return previous imageData. (c) `writeJsonFile` dibungkus try/catch supaya disk error gak break worker. (d) `capturePreviewAccount` jadi method tersendiri, fallback search lebih permissive (any account dengan page hidup, bukan cuma `status === "running"`).
+- Test coverage: 1 vitest case di `tests/unit/kiro-bulk-import-manager.test.js` ("does not let a hung capturePreview block persistJobSnapshot") yang stub `capturePreview` jadi `Promise(() => {})` (never resolves) dan assert `persistJobSnapshot` selesai dalam <4s, file persisted, `lastPreview` lama tetap di tempat.
+
+# v0.4.86-4 (2026-06-14)
+
+## Release Highlights
+- [FIX] Bulk-import gak stuck lagi di Google login dengan email field kosong - selector diperluas + retry 15s + fallback ke type() untuk React-controlled input
+
+## Technical Notes
+- Symptom: setelah v0.4.86-3 fix browser launch, beberapa worker stuck di "needs_manual" karena Google Sign-in dialog muncul tapi email field gak ke-fill (user lihat "Email or phone" kosong di Live Browser Preview).
+- Root cause #1 — selector terlalu sempit. `EMAIL_INPUT_SELECTOR` cuma cover `input[type="email"], input[autocomplete="username"]`. Google's actual form uses `input#identifierId` (stable ID), `input[name="identifier"]` (mobile variant), kadang `input[type="text"][autofocus]` (A/B test). Plus `aria-label` berbeda-beda per locale ("Email or phone" / "Email atau nomor telepon" / dll).
+- Root cause #2 — `getFirstVisibleLocator` cuma single-shot check (count + isVisible). Kalau Google form belum render saat polling pertama (typical SPA hydration ~1-3s), function return null → email skipped → polling loop eventually hit MANUAL_ASSIST_MARKERS → status `needs_manual`.
+- Root cause #3 — `locator.fill()` kadang bypass React/Vue onChange wiring di Google's controlled input, value snap-back ke empty saat form re-render.
+- Fix: (a) `EMAIL_INPUT_SELECTOR` & `PASSWORD_INPUT_SELECTOR` diperluas jadi 10 + 7 selectors mencakup semua variant + i18n aria-label English/Indonesian. (b) New helper `waitForFirstVisibleLocator(page, selector, { timeout: 15000, pollInterval: 500 })` polling sampai elemen visible atau timeout. (c) New helper `fillInputResilient(locator, value)` panggil `fill()`, verify via `inputValue()`, kalau mismatch fallback ke `click → fill('') → type(delay: 50)` untuk bypass framework wiring. (d) Kedua helper dipakai di 3 call sites: initial email entry, polling-loop email re-entry, password entry.
+- Test coverage: 16 vitest cases di `tests/unit/kiroGoogleAutomation.email.test.js` (selector regression, waitForFirstVisibleLocator timing semantics, fillInputResilient happy path / React-controlled fallback / total failure).
+
 # v0.4.86-3 (2026-06-14)
 
 ## Release Highlights

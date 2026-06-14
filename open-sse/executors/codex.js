@@ -298,50 +298,67 @@ export class CodexExecutor extends BaseExecutor {
     }
   }
 
-  // Peek first N bytes of SSE body to detect upstream "overloaded" errors.
-  // Returns { matched: string|null, replacementBody: ReadableStream|null }.
-  // Caller MUST use replacementBody (original body has been read).
   async _peekSseOverloaded(response) {
     if (!response || !response.ok || !response.body) return { matched: null, replacementBody: null };
+
+    // Hold the reader for the full lifecycle. Releasing then re-acquiring on
+    // node:undici occasionally drops the resume offset, which surfaces as
+    // missing characters mid-stream (the "Bac Sek P L" symptom). Keeping a
+    // single reader and feeding chunks through one ReadableStream avoids that.
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    const chunks = [];
-    let text = "";
+    const prefixChunks = [];
+    let peekText = "";
     let matched = null;
+    let peekDone = false;
+
     try {
-      while (text.length < CODEX_SSE_PEEK_BYTES) {
+      while (peekText.length < CODEX_SSE_PEEK_BYTES) {
         const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        text += decoder.decode(value, { stream: true });
-        const hit = CODEX_SSE_OVERLOADED_PATTERNS.find(p => text.includes(p));
+        if (done) { peekDone = true; break; }
+        prefixChunks.push(value);
+        peekText += decoder.decode(value, { stream: true });
+        const hit = CODEX_SSE_OVERLOADED_PATTERNS.find((p) => peekText.includes(p));
         if (hit) { matched = hit; break; }
       }
-    } catch (e) {
-      dbg("CODEX", `peek read error: ${e.message}`);
+    } catch (error) {
+      dbg("CODEX", `peek read error: ${error.message}`);
+      peekDone = true;
     }
-    reader.releaseLock();
 
-    // Re-assemble stream: prefix chunks + remaining upstream body
-    const upstream = response.body;
-    let upstreamReader = null;
+    if (matched) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      return { matched, replacementBody: null };
+    }
+
     const replacementBody = new ReadableStream({
       start(controller) {
-        for (const c of chunks) controller.enqueue(c);
-        upstreamReader = upstream.getReader();
+        for (const chunk of prefixChunks) controller.enqueue(chunk);
+        if (peekDone) controller.close();
       },
       async pull(controller) {
+        if (peekDone) {
+          controller.close();
+          return;
+        }
         try {
-          const { done, value } = await upstreamReader.read();
-          if (done) { controller.close(); return; }
+          const { done, value } = await reader.read();
+          if (done) {
+            peekDone = true;
+            controller.close();
+            return;
+          }
           controller.enqueue(value);
-        } catch (e) { controller.error(e); }
+        } catch (error) {
+          controller.error(error);
+        }
       },
-      cancel(reason) {
-        try { upstreamReader?.cancel(reason); } catch { /* noop */ }
+      async cancel(reason) {
+        peekDone = true;
+        try { await reader.cancel(reason); } catch { /* noop */ }
       },
     });
-    return { matched, replacementBody };
+    return { matched: null, replacementBody };
   }
 
   // Parse Codex usage_limit_reached to extract precise resetsAtMs; fallback to default otherwise

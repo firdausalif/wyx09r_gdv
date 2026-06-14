@@ -16,6 +16,7 @@ const ENGINE_OPTIONS = [
   { value: "chromium", label: "Chromium (default, fast)" },
   { value: "camoufox", label: "Camoufox (stealth Firefox, slower)" },
 ];
+const RELAY_POOL_TYPES = new Set(["vercel", "cloudflare", "deno"]);
 
 function describeWorkerLimit(limitedBy) {
   if (limitedBy === "ram") return "RAM";
@@ -82,6 +83,9 @@ export default function BulkAccountAutomationModal({
   const [systemSpecInfo, setSystemSpecInfo] = useState(null);
   const [systemSpecLoading, setSystemSpecLoading] = useState(false);
   const [engine, setEngine] = useState(DEFAULT_ENGINE);
+  const [proxyPoolId, setProxyPoolId] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
+  const [proxyPools, setProxyPools] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -108,6 +112,8 @@ export default function BulkAccountAutomationModal({
     setBulkText("");
     setConcurrency(String(DEFAULT_CONCURRENCY));
     setAutoConcurrency(true);
+    setProxyPoolId("");
+    setProxyUrl("");
     setActiveJob(null);
     setError(null);
     setImporting(false);
@@ -145,6 +151,31 @@ export default function BulkAccountAutomationModal({
       cancelled = true;
     };
   }, [isOpen, systemSpecInfo]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let cancelled = false;
+    const loadPools = async () => {
+      try {
+        const res = await fetch("/api/proxy-pools", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const pools = (data.pools || data || []).filter(
+          (pool) => pool.isActive && !RELAY_POOL_TYPES.has(pool.type)
+        );
+        setProxyPools(pools);
+      } catch {
+        // noop
+      }
+    };
+
+    void loadPools();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -225,16 +256,22 @@ export default function BulkAccountAutomationModal({
     setJobRestoreNotice(null);
 
     try {
+      const postBody = {
+        accounts: lines,
+        concurrency: autoConcurrency
+          ? "auto"
+          : Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
+        engine,
+      };
+      if (proxyPoolId) {
+        postBody.proxyPoolId = proxyPoolId;
+      } else if (proxyUrl.trim()) {
+        postBody.proxyUrl = proxyUrl.trim();
+      }
       const res = await fetch(`/api/oauth/${provider}/bulk-import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accounts: lines,
-          concurrency: autoConcurrency
-            ? "auto"
-            : Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
-          engine,
-        }),
+        body: JSON.stringify(postBody),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -381,6 +418,43 @@ export default function BulkAccountAutomationModal({
                   Camoufox is a stealth Firefox; first run downloads ~150MB.
                 </p>
               </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">Network Proxy (optional)</label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-text-muted">Proxy Pool</label>
+                  <select
+                    value={proxyPoolId}
+                    onChange={(event) => {
+                      setProxyPoolId(event.target.value);
+                      if (event.target.value) setProxyUrl("");
+                    }}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    <option value="">None</option>
+                    {proxyPools.map((pool) => (
+                      <option key={pool.id} value={pool.id}>
+                        {pool.name || pool.proxyUrl || pool.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-text-muted">Custom Proxy URL</label>
+                  <Input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(event) => setProxyUrl(event.target.value)}
+                    disabled={Boolean(proxyPoolId)}
+                    placeholder="http://user:pass@host:port"
+                  />
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-text-muted">
+                Browsers will route Google login traffic through the chosen proxy. Relay-style pools (Vercel, Cloudflare, Deno) are excluded because they only rewrite API URLs.
+              </p>
             </div>
           </>
         )}

@@ -1,3 +1,12 @@
+# v0.5.9-wyx0.1 (2026-06-23)
+
+## Sorotan
+- CodeBuddy biasa dipisahkan lagi dari CodeBuddy CN, jadi provider dan quota tracker bisa muncul dua-duanya.
+- Automation CodeBuddy CN via 5sim dibuat lebih jelas: cek token/saldo, beli nomor, tunggu OTP, generate API key, lalu simpan koneksi.
+- Tambahan opsi proxy pool dan round-robin proxy untuk automation login.
+- Runtime browser automation dibuat lebih tahan missing dependency Playwright/Camoufox di dev, CLI, build, dan package npm.
+- Perbaikan build CLI Windows saat folder lama terkunci, serta fix build Next karena import registry CodeBuddy dobel.
+
 # v0.5.8-wyx0.1 (2026-06-22)
 
 ## Release Highlight

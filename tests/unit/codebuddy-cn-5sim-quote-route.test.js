@@ -115,4 +115,37 @@ describe("CodeBuddy CN 5sim quote route", () => {
     expect(result.route.proxyRoute).toBe("selected proxy pool #2");
     expect(result.route.fallbackUsed).toBe(true);
   });
+
+  it("keeps SOCKS proxy credentials intact when building fallback routes", async () => {
+    mocks.getProxyPools.mockResolvedValue([
+      {
+        id: "pool-1",
+        name: "Sillox Proxy",
+        type: "http",
+        isActive: true,
+        proxyUrl: "socks5://user:pa;ss,word@134.209.102.0:10000",
+      },
+    ]);
+    const { __test__ } = await import("../../src/app/api/oauth/codebuddy-cn/5sim-quote/route.js");
+
+    const result = await __test__.buildQuoteAttempts({
+      proxyUrl: "socks5://user:pa;ss,word@134.209.102.0:10000",
+      proxyUrls: ["socks5://user:pa;ss,word@134.209.102.0:10000"],
+      proxyMode: "single",
+      proxyPoolId: "pool-1",
+      proxySource: "pool",
+      error: null,
+    }, { proxyPoolId: "pool-1" });
+
+    expect(result).toEqual([
+      {
+        proxyUrl: null,
+        proxyMode: "none",
+        proxyPoolId: null,
+        proxySource: null,
+        proxyCount: 0,
+        proxyRoute: "direct",
+      },
+    ]);
+  });
 });

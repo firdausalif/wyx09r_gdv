@@ -2,7 +2,7 @@ const RELAY_POOL_TYPES = new Set(["vercel", "cloudflare", "deno"]);
 
 function splitProxyUrls(value) {
   return String(value || "")
-    .split(/[\s,;]+/)
+    .split(/[\s,;]+(?=(?:https?:\/\/|socks[45]:\/\/))/i)
     .map((entry) => entry.trim())
     .filter(Boolean);
 }

@@ -6,7 +6,7 @@ const VALID_PROXY_PREFIXES = ["http://", "https://", "socks4://", "socks5://"];
 
 export function splitBulkImportProxyUrls(value) {
   return String(value || "")
-    .split(/[\s,;]+/)
+    .split(/[\s,;]+(?=(?:https?:\/\/|socks[45]:\/\/))/i)
     .map((entry) => entry.trim())
     .filter(Boolean);
 }

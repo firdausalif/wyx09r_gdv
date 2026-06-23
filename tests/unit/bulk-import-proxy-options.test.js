@@ -32,4 +32,20 @@ describe("bulk import proxy options", () => {
     expect(pools[1].browserCompatible).toBe(true);
     expect(formatBrowserProxyPoolOption(pools[1])).toBe("Sillox Proxy (2 proxies)");
   });
+
+  it("does not split proxy credentials that contain separator characters", () => {
+    const pools = getBrowserProxyPools({
+      proxyPools: [
+        {
+          id: "sillox",
+          name: "Sillox Proxy",
+          type: "http",
+          isActive: true,
+          proxyUrl: "socks5://user:pa;ss,word@134.209.102.0:10000",
+        },
+      ],
+    });
+
+    expect(formatBrowserProxyPoolOption(pools[0])).toBe("Sillox Proxy (1 proxy)");
+  });
 });

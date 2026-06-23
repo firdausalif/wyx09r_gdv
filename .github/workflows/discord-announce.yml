@@ -1,10 +1,10 @@
 name: Discord Changelog Announce
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build CLI & Publish to npm"]
     branches: [master]
-    paths:
-      - "package.json"
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -17,12 +17,13 @@ permissions:
 
 jobs:
   announce:
-    if: ${{ vars.DISCORD_ANNOUNCE_ENABLED == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Detect version bump
         id: detect
@@ -37,6 +38,13 @@ jobs:
               NEW_VERSION="$DISPATCH_VERSION"
             fi
             echo "Manual dispatch: announcing $NEW_VERSION"
+            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "NPM publish workflow succeeded: announcing $NEW_VERSION"
             echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
             echo "bumped=true" >> "$GITHUB_OUTPUT"
             exit 0

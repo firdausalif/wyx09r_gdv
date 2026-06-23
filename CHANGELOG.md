@@ -1,3 +1,12 @@
+# v0.5.9-wyx0.5 (2026-06-23)
+
+## Sorotan
+- CodeBuddy biasa dan CodeBuddy CN sekarang dipisahkan lagi, jadi provider, jumlah akun, dan quota tracker bisa tampil dua-duanya.
+- Automation CodeBuddy CN via 5sim dibuat lebih siap dipakai: cek token/saldo, hitung estimasi akun yang bisa dibeli, beli nomor, OTP, generate API key, lalu simpan koneksi.
+- Proxy automation ditambah pilihan proxy pool dan round-robin, supaya worker bisa muter proxy dari pool yang sudah diset.
+- Runtime browser automation untuk Chromium/Camoufox dibuat lebih stabil di dev, CLI, build, dan package npm.
+- Fix blocker Windows CLI yang bikin automation gagal dengan error `File URL path must be absolute`.
+
 # v0.5.9-wyx0.1 (2026-06-23)
 
 ## Sorotan

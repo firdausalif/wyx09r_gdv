@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, CodeBuddyQuotaCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -38,6 +38,7 @@ export default function ProviderDetailPage() {
   const [proxyPools, setProxyPools] = useState([]);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
+  const [showCodeBuddyQuotaCookieModal, setShowCodeBuddyQuotaCookieModal] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
@@ -80,6 +81,10 @@ export default function ProviderDetailPage() {
   };
 
   const triggerOAuthConnection = () => {
+    if (providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn") {
+      router.push(`/dashboard/automation?provider=${providerId}`);
+      return;
+    }
     if (providerId === "antigravity" && typeof window !== "undefined") {
       const confirmed = window.localStorage.getItem(AG_RISK_STORAGE_KEY) === "true";
       if (!confirmed) {
@@ -142,6 +147,7 @@ export default function ProviderDetailPage() {
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
+  const usesAutomationLogin = providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn";
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
   const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
   const thinkingConfig = AI_PROVIDERS[providerId]?.thinkingConfig || THINKING_CONFIG.extended;
@@ -654,6 +660,11 @@ export default function ProviderDetailPage() {
   const handleIFlowCookieSuccess = () => {
     fetchConnections();
     setShowIFlowCookieModal(false);
+  };
+
+  const handleCodeBuddyQuotaCookieSuccess = () => {
+    fetchConnections();
+    setShowCodeBuddyQuotaCookieModal(false);
   };
 
   const handleSaveApiKey = async (formData) => {
@@ -1417,12 +1428,17 @@ export default function ProviderDetailPage() {
                         {translate("Bulk Add")}
                       </Button>
                     )}
+                    {providerId === "codebuddy" && (
+                      <Button size="sm" icon="cookie" variant="secondary" onClick={() => setShowCodeBuddyQuotaCookieModal(true)}>
+                        Quota Cookie
+                      </Button>
+                    )}
                     <Button
                       size="sm"
-                      icon="add"
+                      icon={usesAutomationLogin ? "automation" : "add"}
                       onClick={triggerAddConnection}
                     >
-                      {isCompatible ? "Add API Key" : (providerId === "iflow" ? "OAuth" : "Add Connection")}
+                      {usesAutomationLogin ? "Open Automation" : (isCompatible ? "Add API Key" : (providerId === "iflow" ? "OAuth" : "Add Connection"))}
                     </Button>
                   </>
                 )}
@@ -1473,6 +1489,18 @@ export default function ProviderDetailPage() {
                       {translate("Bulk Add")}
                     </Button>
                   )}
+                  {providerId === "codebuddy" && (
+                    <Button
+                      size="sm"
+                      icon="cookie"
+                      variant="secondary"
+                      onClick={() => setShowCodeBuddyQuotaCookieModal(true)}
+                      title="Attach CodeBuddy web cookie for quota tracking"
+                      className="w-full sm:w-auto"
+                    >
+                      Quota Cookie
+                    </Button>
+                  )}
                   {hasDualAuthModes ? (
                     <>
                       <Button
@@ -1496,11 +1524,11 @@ export default function ProviderDetailPage() {
                   ) : (
                     <Button
                       size="sm"
-                      icon="add"
+                      icon={usesAutomationLogin ? "automation" : "add"}
                       onClick={triggerAddConnection}
                       className="w-full sm:w-auto"
                     >
-                      Add
+                      {usesAutomationLogin ? "Open Automation" : "Add"}
                     </Button>
                   )}
                 </div>
@@ -1581,6 +1609,16 @@ export default function ProviderDetailPage() {
           isOpen={showIFlowCookieModal}
           onSuccess={handleIFlowCookieSuccess}
           onClose={() => setShowIFlowCookieModal(false)}
+        />
+      )}
+      {providerId === "codebuddy" && (
+        <CodeBuddyQuotaCookieModal
+          isOpen={showCodeBuddyQuotaCookieModal}
+          connectionIds={(selectedConnectionIds.length > 0
+            ? selectedConnectionIds
+            : connections.map((connection) => connection.id))}
+          onSuccess={handleCodeBuddyQuotaCookieSuccess}
+          onClose={() => setShowCodeBuddyQuotaCookieModal(false)}
         />
       )}
       <AddApiKeyModal

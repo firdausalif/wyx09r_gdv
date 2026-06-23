@@ -130,6 +130,7 @@ const REFRESH_HANDLERS = {
   kiro: (c, log) => refreshKiroToken(c.refreshToken, c.providerSpecificData, log),
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
+  codebuddy: (c, log) => refreshCodebuddyToken(c.refreshToken, log, "codebuddy"),
   vertex: vertexRefreshHandler,
   "vertex-partner": vertexRefreshHandler
 };

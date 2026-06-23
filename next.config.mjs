@@ -18,9 +18,10 @@ const nextConfig = {
     "sql.js",
     "node:sqlite",
     "bun:sqlite",
+    "camoufox-js",
+    "impit",
     "playwright",
     "playwright-core",
-    "camoufox-js",
   ],
   turbopack: {
     root: tracingRoot

@@ -1,9 +1,9 @@
 {
-  "name": "9router",
-  "version": "0.5.9",
-  "description": "9Router CLI - Start and manage 9Router server",
+  "name": "wyxrouter",
+  "version": "0.5.9-wyx0.1",
+  "description": "WYx0 CLI - Start and manage the synchronized 9Router server",
   "bin": {
-    "9router": "./cli.js"
+    "wyxrouter": "./cli.js"
   },
   "files": [
     "cli.js",
@@ -42,6 +42,11 @@
     "api"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Wisyam/9router_wyx0"
+  },
+  "homepage": "https://9router.com",
   "devDependencies": {
     "esbuild": "^0.25.12",
     "nodemon": "^3.1.14"

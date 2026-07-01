@@ -294,9 +294,13 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const targetUrl = typeof url === "string" ? url : url.toString();
 
-  // Vercel relay: forward request via relay headers
+  // Vercel relay: forward request via relay headers.
+  // Skip for providers that require custom headers (X-Authorization, X-Request-Model, etc.)
+  // because Vercel Edge Functions strip non-standard headers, breaking the upstream auth.
   const vercelRelayUrl = normalizeString(proxyOptions?.vercelRelayUrl);
-  if (vercelRelayUrl) {
+  const relayBypassHosts = ["autoglm-api.autoglm.ai"];
+  const shouldBypassRelay = relayBypassHosts.some((h) => targetUrl.includes(h));
+  if (vercelRelayUrl && !shouldBypassRelay) {
     const parsed = new URL(targetUrl);
     const relayHeaders = {
       ...options.headers,

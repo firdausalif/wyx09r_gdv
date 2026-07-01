@@ -65,12 +65,12 @@ export class AutoclawExecutor extends DefaultExecutor {
       const headers = this.buildHeaders(args.credentials, args.stream);
       const body = this.transformRequest(args.model, args.body, args.stream, args.credentials);
       console.log("[AUTOCLAW DEBUG] URL:", this.config.baseUrl);
-      console.log("[AUTOCLAW DEBUG] headers keys:", Object.keys(headers).join(","));
       console.log("[AUTOCLAW DEBUG] X-Request-Model:", headers["X-Request-Model"]);
-      console.log("[AUTOCLAW DEBUG] X-Authorization (first 20):", String(headers["X-Authorization"]).slice(0, 20));
-      console.log("[AUTOCLAW DEBUG] body keys:", Object.keys(body).join(","));
-      console.log("[AUTOCLAW DEBUG] body.model:", body.model);
-      console.log("[AUTOCLAW DEBUG] body.stream:", body.stream);
+      console.log("[AUTOCLAW DEBUG] X-Auth (first 15):", String(headers["X-Authorization"]).slice(0, 15));
+      console.log("[AUTOCLAW DEBUG] body.model:", body.model, "stream:", body.stream, "keys:", Object.keys(body).join(","));
+      console.log("[AUTOCLAW DEBUG] proxy.vercelRelay:", args.proxyOptions?.vercelRelayUrl || "none");
+      console.log("[AUTOCLAW DEBUG] proxy.connProxyUrl:", args.proxyOptions?.connectionProxyUrl || "none");
+      console.log("[AUTOCLAW DEBUG] proxy.connProxyEnabled:", args.proxyOptions?.connectionProxyEnabled);
       return await super.execute(args);
     } finally {
       this._currentModel = null;

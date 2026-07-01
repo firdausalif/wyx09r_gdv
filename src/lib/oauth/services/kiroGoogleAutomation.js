@@ -493,18 +493,7 @@ async function humanType(locator, value, { timeout = 15_000 } = {}) {
   }
 
   for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (Math.random() < 0.02 && i + 1 < text.length) {
-      const wrongChar = "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)];
-      await locator.press(wrongChar, { timeout });
-      await new Promise((resolve) => setTimeout(resolve, 80 + Math.floor(Math.random() * 150)));
-      await locator.press("Backspace", { timeout });
-      await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
-    }
-
-    await locator.press(char, { timeout });
-
+    await locator.press(text[i], { timeout });
     const baseDelay = 50 + Math.floor(Math.random() * 130);
     const longPause = Math.random() < 0.06 ? 300 + Math.floor(Math.random() * 500) : 0;
     await new Promise((resolve) => setTimeout(resolve, baseDelay + longPause));

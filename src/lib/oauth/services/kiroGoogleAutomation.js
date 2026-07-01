@@ -179,6 +179,19 @@ const PROVIDER_ONBOARDING_ACTION_SELECTORS = [
   'button:has-text("Launch")',
   'button:has-text("Use CodeBuddy")',
   'button:has-text("Go to CodeBuddy")',
+  'button:has-text("继续")',
+  'button:has-text("下一步")',
+  'button:has-text("确认")',
+  'button:has-text("同意")',
+  'button:has-text("开始")',
+  'button:has-text("完成")',
+  'button:has-text("跳过")',
+  'button:has-text("暂不")',
+  'button:has-text("保存")',
+  'button:has-text("创建")',
+  '[role="button"]:has-text("继续")',
+  '[role="button"]:has-text("确认")',
+  '[role="button"]:has-text("同意")',
 ];
 
 const PROVIDER_REGION_TRIGGER_SELECTORS = [
@@ -493,18 +506,7 @@ async function humanType(locator, value, { timeout = 15_000 } = {}) {
   }
 
   for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (Math.random() < 0.02 && i + 1 < text.length) {
-      const wrongChar = "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)];
-      await locator.press(wrongChar, { timeout });
-      await new Promise((resolve) => setTimeout(resolve, 80 + Math.floor(Math.random() * 150)));
-      await locator.press("Backspace", { timeout });
-      await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
-    }
-
-    await locator.press(char, { timeout });
-
+    await locator.press(text[i], { timeout });
     const baseDelay = 50 + Math.floor(Math.random() * 130);
     const longPause = Math.random() < 0.06 ? 300 + Math.floor(Math.random() * 500) : 0;
     await new Promise((resolve) => setTimeout(resolve, baseDelay + longPause));
@@ -605,7 +607,7 @@ async function handleGoogleConsent(page, reportStep) {
   if (!isGoogleAuthPage(page)) return false;
 
   const text = await readPageText(page);
-  const looksLikeConsent = /wants to access|ingin mengakses|akses ke akun google|allow/i.test(text);
+  const looksLikeConsent = /wants to access|ingin mengakses|akses ke akun google|allow|想要访问|授权访问|允许/i.test(text);
   if (!looksLikeConsent) return false;
 
   await page.evaluate(() => {
@@ -1385,6 +1387,16 @@ export async function runGoogleAccountAutomation({
     }
   }
 
+  // Wait for navigation away from email page before entering the polling loop.
+  // Without this, the loop may re-detect the stale email input and resubmit,
+  // causing Google to show "Wrong password" (password never entered).
+  try {
+    await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
+  } catch {
+    // Page didn't navigate; the loop will handle retry.
+  }
+  await page.waitForTimeout(1000);
+
   while (Date.now() - startTime < shortTimeoutMs) {
     const successResult = await Promise.race([
       successPromise.then((result) => ({ kind: "success", result })).catch((error) => ({ kind: "success_error", error })),
@@ -1476,7 +1488,10 @@ export async function runGoogleAccountAutomation({
       } else {
         reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
       }
-      await page.waitForTimeout(700);
+      try {
+        await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
+      } catch {}
+      await page.waitForTimeout(2000);
       continue;
     }
 

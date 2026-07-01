@@ -478,19 +478,35 @@ async function humanType(locator, value, { timeout = 15_000 } = {}) {
 
   try {
     await locator.click({ timeout: 5_000 });
-  } catch {
-    /* noop */
-  }
-  try {
-    await locator.fill("");
+    await new Promise((resolve) => setTimeout(resolve, 200 + Math.floor(Math.random() * 400)));
   } catch {
     /* noop */
   }
 
+  try {
+    await locator.press("Control+a");
+    await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+    await locator.press("Delete");
+    await new Promise((resolve) => setTimeout(resolve, 150 + Math.floor(Math.random() * 300)));
+  } catch {
+    try { await locator.fill(""); } catch {}
+  }
+
   for (let i = 0; i < text.length; i++) {
-    await locator.press(text[i], { timeout });
-    const baseDelay = 30 + Math.floor(Math.random() * 120);
-    const longPause = Math.random() < 0.08 ? 200 + Math.floor(Math.random() * 400) : 0;
+    const char = text[i];
+
+    if (Math.random() < 0.02 && i + 1 < text.length) {
+      const wrongChar = "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)];
+      await locator.press(wrongChar, { timeout });
+      await new Promise((resolve) => setTimeout(resolve, 80 + Math.floor(Math.random() * 150)));
+      await locator.press("Backspace", { timeout });
+      await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 100)));
+    }
+
+    await locator.press(char, { timeout });
+
+    const baseDelay = 50 + Math.floor(Math.random() * 130);
+    const longPause = Math.random() < 0.06 ? 300 + Math.floor(Math.random() * 500) : 0;
     await new Promise((resolve) => setTimeout(resolve, baseDelay + longPause));
   }
 
@@ -1350,18 +1366,21 @@ export async function runGoogleAccountAutomation({
 
   reportStep(openingStep, openingMessage);
   await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(2_000);
+  await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
 
   await handleProviderLoginGate(page, reportStep);
 
   const emailInput = await waitForFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR, { timeout: 15_000 });
   if (emailInput) {
     reportStep("entering_email", "Entering Google email");
+    await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+    await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
     const filled = await fillInputResilient(emailInput, email);
     if (!filled) {
       reportStep("email_fill_failed", "Could not fill the Google email field; will retry in the polling loop");
     } else {
       reportStep("submitting_email", "Submitting email");
+      await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
       await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
     }
   }
@@ -1446,9 +1465,13 @@ export async function runGoogleAccountAutomation({
     const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
     if (passwordInput) {
       reportStep("entering_password", "Entering Google password");
+      await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
+      await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+      await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
       const filled = await fillInputResilient(passwordInput, password);
       if (filled) {
         reportStep("submitting_password", "Submitting password");
+        await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
         await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
       } else {
         reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");

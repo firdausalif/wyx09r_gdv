@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { PROVIDERS } from "../config/providers.js";
-
-console.log("[AUTOCLAW] executor module loaded");
+import { PROVIDER_MODELS } from "../config/providerModels.js";
 
 const APP_ID = "100003";
 const APP_KEY = "38d2391985e2369a5fb8227d8e6cd5e5";
@@ -29,8 +28,8 @@ function signHeaders(extra = {}) {
 }
 
 function resolveUpstreamModel(model) {
-  const providerConfig = PROVIDERS.autoclaw;
-  const match = (providerConfig?.models || []).find((m) => m.id === model || m.alias === model);
+  const models = PROVIDER_MODELS["ac"] || PROVIDER_MODELS["autoclaw"] || [];
+  const match = models.find((m) => m.id === model || m.alias === model);
   return match?.upstreamModelId || model;
 }
 
@@ -64,15 +63,6 @@ export class AutoclawExecutor extends DefaultExecutor {
   async execute(args) {
     this._currentModel = args.model;
     try {
-      const headers = this.buildHeaders(args.credentials, args.stream);
-      const body = this.transformRequest(args.model, args.body, args.stream, args.credentials);
-      console.log("[AUTOCLAW DEBUG] URL:", this.config.baseUrl);
-      console.log("[AUTOCLAW DEBUG] X-Request-Model:", headers["X-Request-Model"]);
-      console.log("[AUTOCLAW DEBUG] X-Auth (first 15):", String(headers["X-Authorization"]).slice(0, 15));
-      console.log("[AUTOCLAW DEBUG] body.model:", body.model, "stream:", body.stream, "keys:", Object.keys(body).join(","));
-      console.log("[AUTOCLAW DEBUG] proxy.vercelRelay:", args.proxyOptions?.vercelRelayUrl || "none");
-      console.log("[AUTOCLAW DEBUG] proxy.connProxyUrl:", args.proxyOptions?.connectionProxyUrl || "none");
-      console.log("[AUTOCLAW DEBUG] proxy.connProxyEnabled:", args.proxyOptions?.connectionProxyEnabled);
       return await super.execute(args);
     } finally {
       this._currentModel = null;

@@ -1374,6 +1374,16 @@ export async function runGoogleAccountAutomation({
     }
   }
 
+  // Wait for navigation away from email page before entering the polling loop.
+  // Without this, the loop may re-detect the stale email input and resubmit,
+  // causing Google to show "Wrong password" (password never entered).
+  try {
+    await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
+  } catch {
+    // Page didn't navigate; the loop will handle retry.
+  }
+  await page.waitForTimeout(1000);
+
   while (Date.now() - startTime < shortTimeoutMs) {
     const successResult = await Promise.race([
       successPromise.then((result) => ({ kind: "success", result })).catch((error) => ({ kind: "success_error", error })),
@@ -1465,7 +1475,10 @@ export async function runGoogleAccountAutomation({
       } else {
         reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
       }
-      await page.waitForTimeout(700);
+      try {
+        await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
+      } catch {}
+      await page.waitForTimeout(2000);
       continue;
     }
 

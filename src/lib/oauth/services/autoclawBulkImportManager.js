@@ -208,13 +208,6 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
     job.manualFollowups.add(followupPromise);
   }
 
-  async capturePreview() {
-    return null;
-  }
-
-  async capturePreviewWithTimeout() {
-    return null;
-  }
 }
 
 function getSingletonStore() {

@@ -19,8 +19,8 @@ function signHeaders(extra = {}) {
     "x-auth-timestamp": ts,
     "x-auth-sign": sign,
     "x-product": "autoclaw",
-    "x-version": "1.10.0",
-    "x-tm": "web",
+    "x-version": "1.9.1",
+    "x-tm": "win",
     "x-channel": "official",
     "x-client-type": "web",
     "x-trace-id": crypto.randomUUID(),
@@ -46,13 +46,12 @@ export class AutoclawExecutor extends DefaultExecutor {
     if (!token) {
       throw new Error("autoclaw: missing accessToken");
     }
+    const rawToken = token.replace(/^Bearer\s+/i, "");
     const extras = {
-      // CRITICAL: LLM proxy uses uppercase 'X-Authorization' (spec quirk).
-      "X-Authorization": token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+      "X-Authorization": rawToken,
       "X-Request-Id": crypto.randomUUID(),
       Accept: stream ? "text/event-stream" : "*/*",
     };
-    // CRITICAL: X-Request-Model header selects upstream model; body.model is IGNORED.
     if (this._currentModel) {
       extras["X-Request-Model"] = resolveUpstreamModel(this._currentModel);
     }

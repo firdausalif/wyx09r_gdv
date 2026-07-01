@@ -179,6 +179,19 @@ const PROVIDER_ONBOARDING_ACTION_SELECTORS = [
   'button:has-text("Launch")',
   'button:has-text("Use CodeBuddy")',
   'button:has-text("Go to CodeBuddy")',
+  'button:has-text("继续")',
+  'button:has-text("下一步")',
+  'button:has-text("确认")',
+  'button:has-text("同意")',
+  'button:has-text("开始")',
+  'button:has-text("完成")',
+  'button:has-text("跳过")',
+  'button:has-text("暂不")',
+  'button:has-text("保存")',
+  'button:has-text("创建")',
+  '[role="button"]:has-text("继续")',
+  '[role="button"]:has-text("确认")',
+  '[role="button"]:has-text("同意")',
 ];
 
 const PROVIDER_REGION_TRIGGER_SELECTORS = [
@@ -594,7 +607,7 @@ async function handleGoogleConsent(page, reportStep) {
   if (!isGoogleAuthPage(page)) return false;
 
   const text = await readPageText(page);
-  const looksLikeConsent = /wants to access|ingin mengakses|akses ke akun google|allow/i.test(text);
+  const looksLikeConsent = /wants to access|ingin mengakses|akses ke akun google|allow|想要访问|授权访问|允许/i.test(text);
   if (!looksLikeConsent) return false;
 
   await page.evaluate(() => {

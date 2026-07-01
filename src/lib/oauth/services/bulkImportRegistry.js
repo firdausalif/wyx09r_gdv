@@ -100,6 +100,25 @@ export const BULK_IMPORT_PROVIDERS = Object.freeze({
       proxySource: resolvedProxy.proxySource,
     }),
   },
+  autoclaw: {
+    label: "AutoClaw",
+    errorLabel: "AutoClaw import job",
+    staleOnLatest404: true,
+    parseAccounts: (accounts) =>
+      import("@/lib/oauth/services/kiroBulkImportManager").then((m) => m.parseKiroBulkAccounts(accounts)),
+    getManager: () =>
+      import("@/lib/oauth/services/autoclawBulkImportManager").then((m) => m.getAutoclawBulkImportManager()),
+    normalizeStartArgs: (body, resolvedProxy) => ({
+      accounts: body?.accounts ?? [],
+      concurrency: body?.concurrency,
+      engine: body?.engine,
+      proxyUrl: resolvedProxy.proxyUrl,
+      proxyUrls: resolvedProxy.proxyUrls,
+      proxyMode: resolvedProxy.proxyMode,
+      proxyPoolId: resolvedProxy.proxyPoolId,
+      proxySource: resolvedProxy.proxySource,
+    }),
+  },
 });
 
 export function isValidBulkImportProvider(providerId) {

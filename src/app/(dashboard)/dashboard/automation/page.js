@@ -375,6 +375,7 @@ function QoderAutomationPanel({ providerInfo, onRefresh }) {
 
 function AutoclawAutomationPanel({ onRefresh }) {
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [autoclawConnections, setAutoclawConnections] = useState([]);
   const [refreshingId, setRefreshingId] = useState(null);
 
@@ -412,6 +413,15 @@ function AutoclawAutomationPanel({ onRefresh }) {
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button type="button" onClick={() => setIsBulkOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="group_add"
+            title="Auto Login Bulk"
+            subtitle="Run bulk gmail|password automation via Google OAuth for AutoClaw."
+          />
+        </button>
         <button type="button" onClick={() => setIsImportOpen(true)} className="text-left">
           <Card
             hover
@@ -422,6 +432,15 @@ function AutoclawAutomationPanel({ onRefresh }) {
           />
         </button>
       </div>
+
+      <BulkAccountAutomationModal
+        isOpen={isBulkOpen}
+        provider="autoclaw"
+        title="AutoClaw Bulk Auto Login"
+        serviceName="AutoClaw"
+        onSuccess={onRefresh}
+        onClose={() => setIsBulkOpen(false)}
+      />
 
       {autoclawConnections.length > 0 && (
         <div className="mt-4 flex flex-col gap-2">
@@ -499,8 +518,8 @@ const AUTOMATION_PROVIDERS = [
     id: "autoclaw",
     label: "AutoClaw",
     icon: "smart_toy",
-    description: "Import AutoClaw access tokens (Google OAuth from autoclaw.z.ai). Tracks point balance + auto-refreshes tokens.",
-    supportedModes: ["import-token"],
+    description: "Import AutoClaw access tokens or run bulk Google OAuth login. Tracks point balance + auto-refreshes tokens.",
+    supportedModes: ["import-token", "bulk-account"],
     component: AutoclawAutomationPanel,
   },
 ];

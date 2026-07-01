@@ -10,6 +10,7 @@ import {
   CodeBuddyCnPhoneAutomationModal,
   KiroOAuthWrapper,
   OAuthModal,
+  AutoclawAutomationModal,
 } from "@/shared/components";
 import { FREE_PROVIDERS } from "@/shared/constants/providers";
 
@@ -372,6 +373,95 @@ function QoderAutomationPanel({ providerInfo, onRefresh }) {
   );
 }
 
+function AutoclawAutomationPanel({ onRefresh }) {
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [autoclawConnections, setAutoclawConnections] = useState([]);
+  const [refreshingId, setRefreshingId] = useState(null);
+
+  const refreshAutoclawList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/oauth/autoclaw/connections", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setAutoclawConnections(data.connections || []);
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAutoclawList();
+  }, [refreshAutoclawList]);
+
+  const handleSaved = async () => {
+    await refreshAutoclawList();
+    onRefresh?.();
+  };
+
+  const handleRefreshToken = async (connectionId) => {
+    setRefreshingId(connectionId);
+    try {
+      const res = await fetch(`/api/oauth/autoclaw/refresh?connectionId=${connectionId}`, { method: "POST" });
+      if (res.ok) {
+        await refreshAutoclawList();
+      }
+    } catch {
+    } finally {
+      setRefreshingId(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button type="button" onClick={() => setIsImportOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="token"
+            title="Import Account"
+            subtitle="Paste access_token + refresh_token from autoclaw.z.ai (Google OAuth interception)."
+          />
+        </button>
+      </div>
+
+      {autoclawConnections.length > 0 && (
+        <div className="mt-4 flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-text-main">Saved Accounts</h3>
+          <div className="flex flex-col gap-1">
+            {autoclawConnections.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{c.name || c.email}</div>
+                  <div className="text-xs text-text-muted">
+                    {c.balance !== null && c.balance !== undefined ? `${c.balance} pts` : "—"}
+                    {c.balanceError ? ` · ${c.balanceError}` : ""}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={refreshingId === c.id}
+                  onClick={() => handleRefreshToken(c.id)}
+                >
+                  Refresh
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <AutoclawAutomationModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onSaved={handleSaved}
+      />
+    </>
+  );
+}
+
 const AUTOMATION_PROVIDERS = [
   {
     id: "kiro",
@@ -404,6 +494,14 @@ const AUTOMATION_PROVIDERS = [
     description: "Bulk GSuite auto login via Google SSO and device flow.",
     supportedModes: ["bulk-account", "device-oauth"],
     component: QoderAutomationPanel,
+  },
+  {
+    id: "autoclaw",
+    label: "AutoClaw",
+    icon: "smart_toy",
+    description: "Import AutoClaw access tokens (Google OAuth from autoclaw.z.ai). Tracks point balance + auto-refreshes tokens.",
+    supportedModes: ["import-token"],
+    component: AutoclawAutomationPanel,
   },
 ];
 

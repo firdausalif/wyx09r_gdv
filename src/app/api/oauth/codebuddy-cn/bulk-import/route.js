@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server";
 import { getCodeBuddyCnPhoneImportManager } from "@/lib/oauth/services/codebuddyCnPhoneImportManager";
-import { resolveBulkImportProxy } from "@/lib/oauth/services/bulkImportProxyResolver";
+import {
+  applyBulkImportProxyMode,
+  resolveBulkImportProxy,
+} from "@/lib/oauth/services/bulkImportProxyResolver";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, error: proxyError } = await resolveBulkImportProxy({
+    const resolvedProxy = await resolveBulkImportProxy({
       proxyPoolId: body?.proxyPoolId,
       proxyUrl: body?.proxyUrl,
     });
+    const { proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, error: proxyError } = applyBulkImportProxyMode(
+      resolvedProxy,
+      body?.proxyMode
+    );
     if (proxyError) {
       return NextResponse.json({ error: proxyError }, { status: 400 });
     }

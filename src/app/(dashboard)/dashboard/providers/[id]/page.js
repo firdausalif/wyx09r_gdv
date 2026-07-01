@@ -82,7 +82,9 @@ export default function ProviderDetailPage() {
 
   const triggerOAuthConnection = () => {
     if (providerId === "kiro" || providerId === "codebuddy" || providerId === "codebuddy-cn") {
-      router.push(`/dashboard/automation?provider=${providerId}`);
+      const url = `/dashboard/automation?provider=${providerId}`;
+      console.log("[Provider Page] Navigating to:", url, "providerId:", providerId);
+      router.push(url);
       return;
     }
     if (providerId === "antigravity" && typeof window !== "undefined") {

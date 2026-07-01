@@ -1,3 +1,16 @@
+# v0.5.9-wyx0.6 (2026-07-01)
+
+## Sorotan
+- **Provider baru: AutoClaw** (Z.ai GLM-5.2 + GLM-5-Turbo, free ~2300 pts/akun). Token import + bulk login automation via Google OAuth dengan token interception. Tracking saldo point per akun di dashboard automation.
+- **Fix KiroService.createSocialAuthorization**: method tidak pernah diimplement sejak awal, bikin bulk import Kiro gagal diam-diam.
+- **Fix Google "wrong password"**: loop re-submit email/password karena stale input setelah page transition. Navigation guard ditambah.
+- **Fix AutoClaw 500**: X-Request-Model header kirim upstream model id (bukan raw model name).
+- **zh-CN support**: 14 selector button Chinese (继续, 确认, 同意, dll) + markers untuk Google onboarding/consent/invalid credentials.
+- **Unified bulk-import routes**: kiro/qoder/codebuddy/codebuddy-cn sekarang pakai satu route `[provider]/bulk-import/*` (fix Next.js 16 params Promise bug).
+- **CodeBuddy CN content-filter**: stream peek 64KB + auto-retry dengan safe payload.
+- **CodeBuddy CN phone**: Keycloak selectors rewrite + 5sim phone format handling.
+- **Human-like typing**: variable delay per char (50-180ms), Ctrl+A+Delete clear, mouse movement sebelum klik.
+
 # v0.5.9-wyx0.5 (2026-06-23)
 
 ## Sorotan

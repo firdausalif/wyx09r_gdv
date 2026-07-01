@@ -21,10 +21,7 @@ function signHeaders(extra = {}) {
     "x-product": "autoclaw",
     "x-version": "1.9.1",
     "x-tm": "win",
-    "x-channel": "official",
-    "x-client-type": "web",
     "x-trace-id": crypto.randomUUID(),
-    "x-lang": "zh-CN",
     ...extra,
   };
 }

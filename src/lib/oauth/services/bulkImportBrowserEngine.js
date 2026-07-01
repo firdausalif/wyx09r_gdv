@@ -148,11 +148,16 @@ async function launchChromium({ proxyUrl, headless = true, args = [] } = {}) {
     }
     chromium = installedRuntimePlaywright.chromium;
   }
-  const options = { headless };
+  const options = { headless, channel: "chrome" };
   if (args.length) options.args = args;
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) options.proxy = proxy;
-  return chromium.launch(options);
+  try {
+    return await chromium.launch(options);
+  } catch {
+    options.channel = undefined;
+    return chromium.launch(options);
+  }
 }
 
 async function loadFirefoxForCamoufox() {

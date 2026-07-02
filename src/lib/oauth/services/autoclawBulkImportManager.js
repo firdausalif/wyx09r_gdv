@@ -4,13 +4,13 @@ import {
   createFreshContext,
   buildLookupResponse,
 } from "./kiroBulkImportManager.js";
-import { createAutoclawCallbackMonitor, runAutoclawGoogleAutomation } from "./autoclawAutomation.js";
+import { createAutoclawTokenMonitor, runAutoclawGoogleAutomation } from "./autoclawAutomation.js";
 import { createProviderConnection } from "../../../models/index.js";
 
 const AUTOCLAW_PROVIDER_ID = "autoclaw";
 
-async function defaultSocialExchange({ access_token, refresh_token, user_id, user_name }) {
-  const device = crypto.randomUUID();
+async function defaultSocialExchange({ access_token, refresh_token, user_id, user_name, device_id }) {
+  const device = device_id || crypto.randomUUID();
   const conn = await createProviderConnection({
     provider: AUTOCLAW_PROVIDER_ID,
     authType: "access_token",
@@ -49,7 +49,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
 
     const deviceId = crypto.randomUUID();
     const { context, page } = await createFreshContext(browser);
-    const callbackPromise = createAutoclawCallbackMonitor(context, page);
+    const callbackPromise = createAutoclawTokenMonitor(context);
     account.runtimeSession = {
       context,
       page,
@@ -80,6 +80,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
           refresh_token: automationResult.refresh_token,
           user_id: automationResult.user_id,
           user_name: automationResult.user_name,
+          device_id: automationResult.device_id,
         });
         this.finalizeAccount(account, "success", {
           connectionId: connection.id,
@@ -173,6 +174,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
           refresh_token: callback.refresh_token,
           user_id: callback.user_id,
           user_name: callback.user_name,
+          device_id: callback.device_id,
         });
 
         this.finalizeAccount(account, "success", {

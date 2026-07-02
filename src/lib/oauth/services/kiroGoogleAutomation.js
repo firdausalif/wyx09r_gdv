@@ -1350,6 +1350,7 @@ export function createKiroCallbackMonitor(context, page, timeoutMs = DEFAULT_MAN
 export async function runGoogleAccountAutomation({
   page,
   authUrl,
+  skipNavigation = false,
   email,
   password,
   successPromise,
@@ -1367,8 +1368,12 @@ export async function runGoogleAccountAutomation({
   };
 
   reportStep(openingStep, openingMessage);
-  await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
+  if (!skipNavigation && authUrl) {
+    await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
+  } else {
+    await page.waitForTimeout(1000 + Math.floor(Math.random() * 1000));
+  }
 
   await handleProviderLoginGate(page, reportStep);
 

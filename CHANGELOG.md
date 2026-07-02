@@ -1,3 +1,11 @@
+# v0.5.10-wyx0.6 (2026-07-02)
+
+## Sorotan
+- **Fix AutoClaw bulk login automation**: alur lama (API-based OAuth URL + network intercept) tidak match dengan web app terbaru. Diganti dengan web UI flow: buka `autoclaw.z.ai/web/` → click login → "Continue with Zai" → popup tab → Google login → Z.ai authorize → redirect balik → extract token dari localStorage.
+- **Fix deviceId mismatch**: sebelumnya 9Router generate random deviceId, tapi AutoClaw punya deviceId sendiri (di localStorage). Token refresh kirim deviceId salah → refresh fail. Sekarang deviceId dari localStorage AutoClaw dipass ke connection save.
+- **Popup tab handling**: "Continue with Zai" buka tab baru. Automation handle popup open dengan fallback same-tab. Token monitor poll SEMUA tab di context (500ms interval) supaya catch token regardless of which tab ends up with it.
+- **skipNavigation flag**: `runGoogleAccountAutomation` dapat param baru `skipNavigation` — kalau true, skip `page.goto(authUrl)` karena page sudah di Z.ai auth page (popup). Reusable untuk provider lain yang pakai multi-tab OAuth flow.
+
 # v0.5.9-wyx0.6 (2026-07-01)
 
 ## Sorotan

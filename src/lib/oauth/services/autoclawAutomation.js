@@ -175,6 +175,31 @@ export async function runAutoclawGoogleAutomation({
     popup = page;
   }
 
+  try {
+    await popup.waitForSelector(
+      [
+        'button:has-text("Continue with Google")',
+        'button:has-text("Google")',
+        'a:has-text("Google")',
+        '[role="button"]:has-text("Google")',
+        'input[type="email"]',
+        'input[autocomplete="username"]',
+        'input[placeholder*="邮箱"]',
+        'input[placeholder*="Email" i]',
+        'button:has-text("登录")',
+        'button:has-text("Login")',
+        'button:has-text("Sign in")',
+      ].join(", "),
+      { state: "visible", timeout: 15_000 }
+    );
+  } catch {
+    return {
+      status: "failed",
+      error: "Z.ai auth page did not render login form or Google button.",
+    };
+  }
+  reportStep("zai_ready", "Z.ai auth page ready — starting automation");
+
   // 5. Run Google account automation on the popup (or main page).
   //    skipNavigation=true because we're already on the Z.ai auth page.
   //    handleProviderLoginGate clicks "Continue with Google" on Z.ai,

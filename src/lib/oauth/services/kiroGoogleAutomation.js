@@ -598,8 +598,7 @@ function isProviderPage(page) {
     return /codebuddy\.(ai|cn)$/.test(url.hostname)
       || url.hostname.endsWith(".codebuddy.ai")
       || url.hostname.endsWith(".codebuddy.cn")
-      || url.hostname === "chat.z.ai"
-      || url.hostname === "autoclaw.z.ai";
+      || url.hostname === "chat.z.ai";
   } catch {
     return false;
   }
@@ -1426,6 +1425,15 @@ export async function runGoogleAccountAutomation({
         error: successResult.error?.message || `Timed out waiting for ${serviceLabel} authorization`,
       };
     }
+
+    try {
+      const currentUrl = page.url();
+      if (currentUrl.includes("webOAuthCallback") || currentUrl.includes("autoclaw.z.ai")) {
+        reportStep("waiting_for_token", `Redirected back — waiting for token extraction`);
+        await page.waitForTimeout(1000);
+        continue;
+      }
+    } catch {}
 
     const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
     if (handledGoogleConsent) {

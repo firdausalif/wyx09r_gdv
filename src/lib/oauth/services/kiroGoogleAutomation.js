@@ -391,8 +391,8 @@ async function clickFirstVisible(page, selectors) {
       const visible = await locator.isVisible().catch(() => false);
       if (!visible) continue;
 
-      await locator.click({ timeout: 5_000 }).catch(() => null);
-      return true;
+      const clicked = await locator.click({ timeout: 5_000 }).then(() => true).catch(() => false);
+      if (clicked) return true;
     }
   }
 
@@ -597,7 +597,9 @@ function isProviderPage(page) {
     const url = new URL(page.url());
     return /codebuddy\.(ai|cn)$/.test(url.hostname)
       || url.hostname.endsWith(".codebuddy.ai")
-      || url.hostname.endsWith(".codebuddy.cn");
+      || url.hostname.endsWith(".codebuddy.cn")
+      || url.hostname === "chat.z.ai"
+      || url.hostname === "autoclaw.z.ai";
   } catch {
     return false;
   }
@@ -1238,6 +1240,7 @@ async function handleProviderLoginGate(page, reportStep) {
   if (checkedTerms) {
     reportStep("accepting_provider_terms", "Accepted provider terms for Google login");
     await page.waitForTimeout(400);
+    return true;
   }
 
   const clickedGoogle = await clickFirstActionable(page, GOOGLE_LOGIN_BUTTON_SELECTORS);
@@ -1471,11 +1474,19 @@ export async function runGoogleAccountAutomation({
       const filled = await fillInputResilient(nextEmailInput, email);
       if (filled) {
         reportStep("submitting_email", "Submitting email");
+        await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
         await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+        // Navigation guard: wait for URL to leave /identifier? path so the
+        // loop does not re-detect the stale email input and re-submit.
+        try {
+          await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
+        } catch {
+          // Page didn't navigate; the loop will handle retry.
+        }
+        await page.waitForTimeout(2000);
       } else {
         reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
       }
-      await page.waitForTimeout(700);
       continue;
     }
 

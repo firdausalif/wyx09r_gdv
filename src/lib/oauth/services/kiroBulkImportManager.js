@@ -693,7 +693,26 @@ export class KiroBulkImportManager {
     const previewAccount = this.capturePreviewAccount(job);
     if (!previewAccount) return null;
 
-    const page = previewAccount.runtimeSession?.page || previewAccount.manualSession?.page;
+    const session = previewAccount.runtimeSession || previewAccount.manualSession;
+    const fallbackPage = session?.page;
+    const context = session?.context;
+    let page = fallbackPage;
+
+    if (context && typeof context.pages === "function") {
+      const pages = context.pages();
+      if (pages.length > 1) {
+        for (let i = pages.length - 1; i >= 0; i--) {
+          try {
+            const url = pages[i].url();
+            if (url && url !== "about:blank") {
+              page = pages[i];
+              break;
+            }
+          } catch {}
+        }
+      }
+    }
+
     if (!page) return null;
 
     const meta = {

@@ -1,3 +1,12 @@
+# v0.5.10-wyx0.7 (2026-07-04)
+
+## Bugfix
+- **Fix AutoClaw Z.ai authorize page**: setelah Google OAuth, Z.ai tampilkan halaman authorize ("AutoGLM would like to access your Z.ai account") dengan TOS checkbox + Continue button. Automation skip halaman ini karena guard `webOAuthCallback` match query param di URL Z.ai (`chat.z.ai/oauth/authorize?redirect_uri=...webOAuthCallback`). Guard disempitkan ke hostname `autoclaw.z.ai` saja + tambah `handleZaiAuthorizePage` untuk deteksi text + centang TOS + klik Continue.
+- **Fix locale zh-CN global**: `createFreshContext` hardcoded `locale: "zh-CN"` untuk semua bulk import. Z.ai serve UI berbeda (email-first, Google button icon-only) untuk zh-CN. Default diubah ke `en-US`, CodeBuddy CN phone pass `zh-CN` eksplisit.
+- **Fix Google button selector**: Z.ai UI zh-CN pakai `button.ButtonContinueWithGoogle` (icon-only, no text "Google"). Selector lama text-based tidak match. Tambah `button.ButtonContinueWithGoogle` + `button[class*="ContinueWithGoogle"]`.
+- **Fix React-controlled checkbox**: `checkFirstVisible` guarded check/click behind `isVisible()` — skip untuk input `opacity-0`. DOM fallback `input.checked = true` tidak trigger React state update. Fix: hapus visibility guard, tambah label click fallback, pakai native property descriptor setter.
+- **Fix token extraction race**: setelah redirect balik ke `autoclaw.z.ai`, loop masih jalan → `handleProviderOnboarding` klik dashboard buttons → interfere token storage. Guard loop skip semua action saat hostname `autoclaw.z.ai`.
+
 # v0.5.10-wyx0.6 (2026-07-02)
 
 ## Sorotan

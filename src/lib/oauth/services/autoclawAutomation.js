@@ -74,6 +74,7 @@ export function createAutoclawTokenMonitor(context, timeoutMs = DEFAULT_MANUAL_T
       });
 
       if (!data) return false;
+
       if (!data.authToken || !data.refreshToken) return false;
 
       settle({
@@ -182,11 +183,11 @@ export async function runAutoclawGoogleAutomation({
         'button:has-text("Google")',
         'a:has-text("Google")',
         '[role="button"]:has-text("Google")',
+        'button.ButtonContinueWithGoogle',
+        'button[class*="ContinueWithGoogle"]',
         'input[type="email"]',
         'input[autocomplete="username"]',
-        'input[placeholder*="邮箱"]',
         'input[placeholder*="Email" i]',
-        'button:has-text("登录")',
         'button:has-text("Login")',
         'button:has-text("Sign in")',
       ].join(", "),

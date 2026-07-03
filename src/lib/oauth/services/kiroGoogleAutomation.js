@@ -123,10 +123,13 @@ const SKIP_BUTTON_SELECTORS = [
 const GOOGLE_LOGIN_BUTTON_SELECTORS = [
   '#social-google',
   'a#social-google',
+  'button.ButtonContinueWithGoogle',
+  'button[class*="ContinueWithGoogle"]',
   'a:has-text("Sign up with Google")',
   'a:has-text("Log in with Google")',
   'button:has-text("Sign up with Google")',
   'button:has-text("Log in with Google")',
+  'button:has-text("Continue with Google")',
   'button:has-text("Google")',
   'a:has-text("Google")',
   'div[role="button"]:has-text("Google")',

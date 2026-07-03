@@ -288,11 +288,11 @@ async function defaultSocialExchange(args) {
   return exchangeAndSaveKiroSocialConnection(args);
 }
 
-export async function createFreshContext(browser) {
+export async function createFreshContext(browser, { locale = "en-US" } = {}) {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
-    locale: "zh-CN",
+    locale,
   });
   const page = await context.newPage();
   return { context, page };

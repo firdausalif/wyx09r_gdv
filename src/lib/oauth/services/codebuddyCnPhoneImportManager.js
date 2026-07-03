@@ -110,7 +110,7 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
       return;
     }
 
-    const fresh = await createFreshContext(browser);
+    const fresh = await createFreshContext(browser, { locale: "zh-CN" });
     const { context } = fresh;
     let page = fresh.page;
     const workerProxyUrl = browser.__ninerouterProxyUrl || job.proxyUrl || null;

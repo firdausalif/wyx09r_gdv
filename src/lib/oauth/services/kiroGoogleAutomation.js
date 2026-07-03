@@ -1246,8 +1246,38 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
   return false;
 }
 
+async function handleZaiAuthorizePage(page, reportStep) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const text = await readPageText(page);
+  const isZaiAuthorize = /would like to access your.*account|wants to access your.*account/i.test(text)
+    || /AutoGLM|autoglm/i.test(text);
+  if (!isZaiAuthorize) return false;
+
+  const checkboxChecked = await checkFirstVisible(page, TERMS_CHECKBOX_SELECTORS);
+  if (checkboxChecked) {
+    reportStep("accepting_zai_authorize_tos", "Accepted Z.ai authorize TOS checkbox");
+    await page.waitForTimeout(500);
+  }
+
+  const clickedContinue = await clickFirstActionable(page, [
+    'button:has-text("Continue"):not([disabled])',
+    'button:not([disabled]):has-text("Continue")',
+  ]);
+  if (clickedContinue) {
+    reportStep("approving_zai_authorize", "Approved Z.ai authorize — continuing to AutoClaw");
+    await page.waitForTimeout(1500);
+    return true;
+  }
+
+  return checkboxChecked;
+}
+
 async function handleProviderLoginGate(page, reportStep) {
   if (isGoogleAuthPage(page)) return false;
+
+  const handledZaiAuthorize = await handleZaiAuthorizePage(page, reportStep);
+  if (handledZaiAuthorize) return true;
 
   const confirmedExistingDialog = await clickFirstActionable(page, PRIVACY_CONFIRM_BUTTON_SELECTORS);
   if (confirmedExistingDialog) {
@@ -1449,7 +1479,8 @@ export async function runGoogleAccountAutomation({
 
     try {
       const currentUrl = page.url();
-      if (currentUrl.includes("webOAuthCallback") || currentUrl.includes("autoclaw.z.ai")) {
+      const urlObj = new URL(currentUrl);
+      if (urlObj.hostname.includes("autoclaw.z.ai")) {
         reportStep("waiting_for_token", `Redirected back — waiting for token extraction`);
         await page.waitForTimeout(1000);
         continue;

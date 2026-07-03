@@ -435,23 +435,41 @@ async function checkFirstVisible(page, selectors) {
       const checked = await locator.isChecked().catch(() => false);
       if (checked) return true;
 
-      const visible = await locator.isVisible().catch(() => false);
-      const didCheck = visible
-        ? await locator.check({ force: true, timeout: 5_000 }).then(() => true).catch(() => false)
-        : false;
-      if (didCheck) return true;
+      const didCheck = await locator.check({ force: true, timeout: 5_000 }).then(() => true).catch(() => false);
+      if (didCheck) {
+        const verified = await locator.isChecked().catch(() => false);
+        if (verified) return true;
+      }
 
-      const clicked = visible
-        ? await locator.click({ force: true, timeout: 5_000 }).then(() => true).catch(() => false)
-        : false;
-      if (clicked) return true;
+      const clicked = await locator.click({ force: true, timeout: 5_000 }).then(() => true).catch(() => false);
+      if (clicked) {
+        await scope.waitForTimeout(200).catch(() => null);
+        const verified = await locator.isChecked().catch(() => false);
+        if (verified) return true;
+      }
+
+      const labelClicked = await scope.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        const label = el.closest("label") || el.querySelector("label");
+        if (label instanceof HTMLElement) { label.click(); return true; }
+        return false;
+      }, selector).catch(() => false);
+      if (labelClicked) {
+        await scope.waitForTimeout(200).catch(() => null);
+        const verified = await locator.isChecked().catch(() => false);
+        if (verified) return true;
+      }
 
       const domChecked = await scope.evaluate((candidateSelector) => {
         const input = document.querySelector(candidateSelector);
         if (!(input instanceof HTMLInputElement)) return false;
-        input.checked = true;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
+        if (setter) setter.call(input, true);
+        else input.checked = true;
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
         return input.checked;
       }, selector).catch(() => false);
       if (domChecked) return true;

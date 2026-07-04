@@ -190,42 +190,83 @@ async function waitForDashboardSession(page, timeoutMs = 5 * 60_000) {
   return false;
 }
 
+async function detectLoginError(page) {
+  try {
+    const errorTexts = [
+      "There was a problem with verification",
+      "Please reload and try again",
+      "Something went wrong",
+      "An error occurred",
+      "Try again later",
+    ];
+    const bodyText = await page.evaluate(() => document.body?.innerText || "");
+    return errorTexts.some((text) => bodyText.includes(text));
+  } catch {
+    return false;
+  }
+}
+
 async function loginCloudflare(page, email, password, onStep) {
   onStep?.("opening_cloudflare_login", "Opening Cloudflare login");
   await page.goto("https://dash.cloudflare.com/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2_000);
 
-  const googleSelectors = [
-    'button:has-text("Continue with Google")',
-    'a:has-text("Continue with Google")',
-    'button:has-text("Sign in with Google")',
-    'a:has-text("Sign in with Google")',
-    '#social-google',
-    'a#social-google',
-    'button[class*="Google"]',
-    'a[class*="Google"]',
-    '[data-provider*="google" i]',
-    'button:has-text("Google")',
-    'a:has-text("Google")',
-  ];
+  let loginReady = false;
 
-  let clickedGoogle = false;
-  for (let attempt = 0; attempt < 5 && !clickedGoogle; attempt += 1) {
-    for (const selector of googleSelectors) {
-      try {
-        const locator = page.locator(selector).first();
-        if (await locator.count() && await locator.isVisible()) {
-          await locator.click({ timeout: 5_000 });
-          clickedGoogle = true;
-          onStep?.("clicked_google_login", "Clicked 'Continue with Google' on Cloudflare");
-          break;
-        }
-      } catch {}
+  for (let reloadAttempt = 0; reloadAttempt < 3; reloadAttempt += 1) {
+    if (reloadAttempt > 0) {
+      onStep?.("reloading_login_page", `Reloading Cloudflare login page (attempt ${reloadAttempt + 1})`);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+      await page.waitForTimeout(2_000);
     }
-    if (!clickedGoogle) await page.waitForTimeout(1_500);
-  }
 
-  if (!clickedGoogle) {
+    if (await detectLoginError(page)) {
+      onStep?.("login_error_detected", `Login error detected on page (attempt ${reloadAttempt + 1}/3)`);
+      if (reloadAttempt < 2) continue;
+      onStep?.("login_error_manual", "Login still erroring after 3 reloads, switching to manual mode");
+      return false;
+    }
+
+    const googleSelectors = [
+      'button:has-text("Continue with Google")',
+      'a:has-text("Continue with Google")',
+      'button:has-text("Sign in with Google")',
+      'a:has-text("Sign in with Google")',
+      '#social-google',
+      'a#social-google',
+      'button[class*="Google"]',
+      'a[class*="Google"]',
+      '[data-provider*="google" i]',
+      'button:has-text("Google")',
+      'a:has-text("Google")',
+    ];
+
+    let clickedGoogle = false;
+    for (let attempt = 0; attempt < 5 && !clickedGoogle; attempt += 1) {
+      for (const selector of googleSelectors) {
+        try {
+          const locator = page.locator(selector).first();
+          if (await locator.count() && await locator.isVisible()) {
+            await locator.click({ timeout: 5_000 });
+            clickedGoogle = true;
+            onStep?.("clicked_google_login", "Clicked 'Continue with Google' on Cloudflare");
+            break;
+          }
+        } catch {}
+      }
+      if (!clickedGoogle) await page.waitForTimeout(1_500);
+    }
+
+    if (clickedGoogle) {
+      loginReady = true;
+      break;
+    }
+
+    if (reloadAttempt < 2) {
+      onStep?.("google_button_not_found", "Google button not found, will reload and retry");
+      continue;
+    }
+
     onStep?.("google_button_not_found", "Google button not found, trying direct OAuth URL");
     try {
       await page.goto("https://dash.cloudflare.com/login/google", { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -233,6 +274,13 @@ async function loginCloudflare(page, email, password, onStep) {
       await page.goto("https://dash.cloudflare.com/login", { waitUntil: "domcontentloaded", timeout: 30_000 });
     }
     await page.waitForTimeout(2_000);
+    loginReady = true;
+    break;
+  }
+
+  if (!loginReady) {
+    onStep?.("login_failed_manual", "Could not proceed with login after 3 attempts, switching to manual mode");
+    return false;
   }
 
   await page.waitForTimeout(2_000);
@@ -253,6 +301,13 @@ async function loginCloudflare(page, email, password, onStep) {
 
   onStep?.("entering_google_email", "Entering email on Google login page");
   await page.waitForTimeout(1_000);
+
+  if (await detectLoginError(page)) {
+    onStep?.("google_login_error", "Error detected on Google login page, reloading...");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => {});
+    await page.waitForTimeout(2_000);
+  }
+
   await fillFirst(page, ["input[type=email]", "input[name=email]", "input#email", "input[type=email]"], email);
   await clickFirst(page, ["button[type=submit]", "button:has-text('Next')", "button:has-text('Log in')", "#next"]);
   await page.waitForTimeout(2_000);
@@ -608,7 +663,17 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
         if (meta.mode === "google") {
           await loginCloudflareWithGoogle(fresh.page, meta.email, meta.password, (step, message) => this.setAccountStep(account, step, message));
         } else {
-          await loginCloudflare(fresh.page, meta.email, meta.password, (step, message) => this.setAccountStep(account, step, message));
+          const loginOk = await loginCloudflare(fresh.page, meta.email, meta.password, (step, message) => this.setAccountStep(account, step, message));
+          if (loginOk === false) {
+            account.manualSession = { context, page: fresh.page, opened: false, openedAt: null };
+            this.finalizeAccount(account, "needs_manual", {
+              error: "Login failed after 3 reloads — manual intervention required",
+              step: "awaiting_manual",
+              message: "Login failed after 3 reloads — please complete login manually in the browser",
+            });
+            await this.persistJobSnapshot(job, { forcePreview: true });
+            return;
+          }
         }
         const created = await createCloudflareTokenFromDashboard(fresh.page, meta.accountId, meta.name, (step, message) => this.setAccountStep(account, step, message));
         if (!created?.apiToken) {
@@ -644,17 +709,21 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
       this.finalizeAccount(account, "failed", { error: error.message, step: "failed", message: error.message });
     } finally {
       account.password = undefined;
-      account.runtimeSession = null;
-      if (context) {
-        try {
-          const pages = context.pages();
-          for (const p of pages) await stopCdpScreencast?.(p).catch(() => null);
-        } catch {}
-        await context.close().catch(() => null);
-      }
-      if (browser) {
-        job.workerBrowsers?.delete?.(browser);
-        await browser.close().catch(() => null);
+      if (account.status === "needs_manual") {
+        account.runtimeSession = null;
+      } else {
+        account.runtimeSession = null;
+        if (context) {
+          try {
+            const pages = context.pages();
+            for (const p of pages) await stopCdpScreencast?.(p).catch(() => null);
+          } catch {}
+          await context.close().catch(() => null);
+        }
+        if (browser) {
+          job.workerBrowsers?.delete?.(browser);
+          await browser.close().catch(() => null);
+        }
       }
       await this.persistJobSnapshot(job, { forcePreview: false });
     }

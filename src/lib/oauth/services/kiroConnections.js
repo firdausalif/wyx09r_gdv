@@ -17,9 +17,22 @@ export async function saveKiroOAuthConnection({
   profileArn,
   authMethod,
   providerLabel,
+  idcData = null,
 }) {
   const kiroService = new KiroService();
   const email = kiroService.extractEmailFromJWT(accessToken);
+
+  const providerSpecificData = {
+    profileArn,
+    authMethod,
+    provider: providerLabel,
+  };
+
+  if (idcData) {
+    providerSpecificData.clientId = idcData.clientId;
+    providerSpecificData.clientSecret = idcData.clientSecret;
+    providerSpecificData.region = idcData.region || "us-east-1";
+  }
 
   const connection = await createProviderConnection({
     provider: "kiro",
@@ -28,11 +41,7 @@ export async function saveKiroOAuthConnection({
     refreshToken,
     expiresAt: buildExpiresAt(expiresIn),
     email: email || null,
-    providerSpecificData: {
-      profileArn,
-      authMethod,
-      provider: providerLabel,
-    },
+    providerSpecificData,
     testStatus: "active",
   });
 
@@ -73,17 +82,26 @@ export async function exchangeAndSaveKiroSocialConnection({
   };
 }
 
-export async function validateAndSaveKiroImportedToken(refreshToken) {
+export async function validateAndSaveKiroImportedToken(refreshToken, idcOptions = null) {
   const kiroService = new KiroService();
-  const tokenData = await kiroService.validateImportToken(refreshToken);
+  const isIdc = !!(idcOptions?.clientId && idcOptions?.clientSecret);
+
+  const providerSpecificData = isIdc
+    ? { clientId: idcOptions.clientId, clientSecret: idcOptions.clientSecret, region: idcOptions.region || "us-east-1", authMethod: "idc" }
+    : {};
+
+  const tokenData = isIdc
+    ? await kiroService.refreshToken(refreshToken, providerSpecificData)
+    : await kiroService.validateImportToken(refreshToken);
 
   const connection = await saveKiroOAuthConnection({
     accessToken: tokenData.accessToken,
-    refreshToken: tokenData.refreshToken,
+    refreshToken: tokenData.refreshToken || refreshToken,
     expiresIn: tokenData.expiresIn,
-    profileArn: tokenData.profileArn,
-    authMethod: "imported",
-    providerLabel: "Imported",
+    profileArn: idcOptions?.profileArn || tokenData.profileArn,
+    authMethod: isIdc ? "idc" : "imported",
+    providerLabel: isIdc ? "Enterprise" : "Imported",
+    idcData: isIdc ? providerSpecificData : null,
   });
 
   return {

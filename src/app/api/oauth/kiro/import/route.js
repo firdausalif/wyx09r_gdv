@@ -7,9 +7,8 @@ import { validateAndSaveKiroImportedToken } from "@/lib/oauth/services/kiroConne
  * Import and validate Kiro credentials.
  * Supported today:
  * - single/bulk refresh token import
- *
- * Reserved for future work:
- * - bulk account credential import (email|password)
+ * - IDC (organization) token import (clientId/clientSecret/region)
+ * - bulk account credential import (email|password) via mode="account"
  */
 export async function POST(request) {
   try {
@@ -65,6 +64,15 @@ export async function POST(request) {
       );
     }
 
+    const idcOptions = (body?.clientId && body?.clientSecret)
+      ? {
+          clientId: body.clientId,
+          clientSecret: body.clientSecret,
+          region: body.region || "us-east-1",
+          profileArn: body.profileArn || null,
+        }
+      : null;
+
     const importedConnections = [];
     const failed = [];
 
@@ -72,7 +80,7 @@ export async function POST(request) {
       const refreshToken = refreshTokens[index];
 
       try {
-        const { connection } = await validateAndSaveKiroImportedToken(refreshToken);
+        const { connection } = await validateAndSaveKiroImportedToken(refreshToken, idcOptions);
         importedConnections.push(connection);
       } catch (error) {
         failed.push({

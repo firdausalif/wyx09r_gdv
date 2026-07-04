@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack --port 20128",
+    "dev:alt": "next dev --webpack --port 20129",
     "build": "next build --webpack",
     "start": "node ./scripts/start-standalone.mjs",
     "dev:bun": "bun --bun next dev --webpack --port 20128",

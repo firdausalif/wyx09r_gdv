@@ -269,6 +269,7 @@ async function defaultBrowserLauncher(job) {
   return launchBulkImportBrowser({
     engine: job?.engine || "chromium",
     proxyUrl: job?.proxyUrl || undefined,
+    headless: job?.headless ?? false,
     args: ["--disable-blink-features=AutomationControlled"],
   });
 }

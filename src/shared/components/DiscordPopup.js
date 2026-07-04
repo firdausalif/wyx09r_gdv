@@ -60,7 +60,7 @@ export default function DiscordPopup() {
           <div style={{ textAlign: "center" }}>
             <h3 className="text-lg font-bold text-text-main">Join our Discord!</h3>
             <p className="mt-2 text-sm leading-relaxed text-text-muted">
-              Get help, share configs, request features, and hang out with the WYx0 community.
+              Get help, share configs, request features, and hang out with the Gd community.
             </p>
           </div>
 

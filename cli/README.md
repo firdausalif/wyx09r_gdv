@@ -2,7 +2,7 @@
 
 CLI package untuk menjalankan server GDRouter lokal.
 
-Version: `v0.5.10-gdr0.1`
+Version: `v0.5.18-gdr0.1`
 
 ## Command
 

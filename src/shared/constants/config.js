@@ -23,7 +23,7 @@ export const PAYMENKU_DONATE_TIERS = [
 ];
 
 export const PAYMENKU_DONATE_INFO = {
-  title: "Support 9Router WYx0",
+  title: "Support 9Router Gd",
   message: "Pilih nominal donasi. Pembayaran via QRIS, Virtual Account, atau E-Wallet didukung di halaman Paymenku.",
 };
 

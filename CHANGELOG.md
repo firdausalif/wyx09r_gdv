@@ -1,4 +1,4 @@
-# v0.5.10-wyx0.7 (2026-07-04)
+# v0.5.10-gd0.7 (2026-07-04)
 
 ## Bugfix
 - **Fix AutoClaw Z.ai authorize page**: setelah Google OAuth, Z.ai tampilkan halaman authorize ("AutoGLM would like to access your Z.ai account") dengan TOS checkbox + Continue button. Automation skip halaman ini karena guard `webOAuthCallback` match query param di URL Z.ai (`chat.z.ai/oauth/authorize?redirect_uri=...webOAuthCallback`). Guard disempitkan ke hostname `autoclaw.z.ai` saja + tambah `handleZaiAuthorizePage` untuk deteksi text + centang TOS + klik Continue.
@@ -7,7 +7,7 @@
 - **Fix React-controlled checkbox**: `checkFirstVisible` guarded check/click behind `isVisible()` — skip untuk input `opacity-0`. DOM fallback `input.checked = true` tidak trigger React state update. Fix: hapus visibility guard, tambah label click fallback, pakai native property descriptor setter.
 - **Fix token extraction race**: setelah redirect balik ke `autoclaw.z.ai`, loop masih jalan → `handleProviderOnboarding` klik dashboard buttons → interfere token storage. Guard loop skip semua action saat hostname `autoclaw.z.ai`.
 
-# v0.5.10-wyx0.6 (2026-07-02)
+# v0.5.10-gd0.6 (2026-07-02)
 
 ## Sorotan
 - **Fix AutoClaw bulk login automation**: alur lama (API-based OAuth URL + network intercept) tidak match dengan web app terbaru. Diganti dengan web UI flow: buka `autoclaw.z.ai/web/` → click login → "Continue with Zai" → popup tab → Google login → Z.ai authorize → redirect balik → extract token dari localStorage.
@@ -15,7 +15,7 @@
 - **Popup tab handling**: "Continue with Zai" buka tab baru. Automation handle popup open dengan fallback same-tab. Token monitor poll SEMUA tab di context (500ms interval) supaya catch token regardless of which tab ends up with it.
 - **skipNavigation flag**: `runGoogleAccountAutomation` dapat param baru `skipNavigation` — kalau true, skip `page.goto(authUrl)` karena page sudah di Z.ai auth page (popup). Reusable untuk provider lain yang pakai multi-tab OAuth flow.
 
-# v0.5.9-wyx0.6 (2026-07-01)
+# v0.5.9-gd0.6 (2026-07-01)
 
 ## Sorotan
 - **Provider baru: AutoClaw** (Z.ai GLM-5.2 + GLM-5-Turbo, free ~2300 pts/akun). Token import + bulk login automation via Google OAuth dengan token interception. Tracking saldo point per akun di dashboard automation.
@@ -28,7 +28,7 @@
 - **CodeBuddy CN phone**: Keycloak selectors rewrite + 5sim phone format handling.
 - **Human-like typing**: variable delay per char (50-180ms), Ctrl+A+Delete clear, mouse movement sebelum klik.
 
-# v0.5.9-wyx0.5 (2026-06-23)
+# v0.5.9-gd0.5 (2026-06-23)
 
 ## Sorotan
 - CodeBuddy biasa dan CodeBuddy CN sekarang dipisahkan lagi, jadi provider, jumlah akun, dan quota tracker bisa tampil dua-duanya.
@@ -37,7 +37,7 @@
 - Runtime browser automation untuk Chromium/Camoufox dibuat lebih stabil di dev, CLI, build, dan package npm.
 - Fix blocker Windows CLI yang bikin automation gagal dengan error `File URL path must be absolute`.
 
-# v0.5.9-wyx0.1 (2026-06-23)
+# v0.5.9-gd0.1 (2026-06-23)
 
 ## Sorotan
 - CodeBuddy biasa dipisahkan lagi dari CodeBuddy CN, jadi provider dan quota tracker bisa muncul dua-duanya.
@@ -46,7 +46,7 @@
 - Runtime browser automation dibuat lebih tahan missing dependency Playwright/Camoufox di dev, CLI, build, dan package npm.
 - Perbaikan build CLI Windows saat folder lama terkunci, serta fix build Next karena import registry CodeBuddy dobel.
 
-# v0.5.8-wyx0.1 (2026-06-22)
+# v0.5.8-gd0.1 (2026-06-22)
 
 ## Release Highlight
 - Optimisasi CodeBuddy agar stream panjang lebih stabil.

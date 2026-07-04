@@ -1,6 +1,6 @@
 {
   "name": "gdrouter",
-  "version": "0.5.10-gdr0.1",
+  "version": "0.5.18-gdr0.1",
   "description": "GDRouter CLI - Start and manage the synchronized router server",
   "bin": {
     "gdrouter": "./cli.js"

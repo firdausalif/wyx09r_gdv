@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-9Router WYx0 - local AI router/proxy that aggregates 96 providers (LLM chat, image, embedding, TTS, STT, web search) behind an OpenAI-compatible API. Next.js 16 App Router + Express-style SSE streaming engine (`open-sse/`). Ships as global npm CLI (`wyxrouter`) with embedded dashboard, MITM proxy, and Playwright-based bulk account automation.
+9Router Gd - local AI router/proxy that aggregates 96 providers (LLM chat, image, embedding, TTS, STT, web search) behind an OpenAI-compatible API. Next.js 16 App Router + Express-style SSE streaming engine (`open-sse/`). Ships as global npm CLI (`gdrouter`) with embedded dashboard, MITM proxy, and Playwright-based bulk account automation.
 
 ## STRUCTURE
 

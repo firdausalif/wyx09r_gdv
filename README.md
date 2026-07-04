@@ -6,7 +6,7 @@ Project ini fork dari 9Router WYx0 oleh Wisyam: https://github.com/Wisyam/9route
 
 GDRouter adalah fork lokal 9Router/WYx09r untuk routing AI provider lewat API kompatibel OpenAI.
 
-Versi: `v0.5.10-gdr0.1`
+Versi: `v0.5.18-gdr0.1`
 
 ## Fitur Utama
 
@@ -163,11 +163,11 @@ npx vitest run --config ./vitest.config.js "tests/translator/"
 Versi aktif project:
 
 ```text
-v0.5.10-gdr0.1
+v0.5.18-gdr0.1
 ```
 
 Package version:
 
 ```text
-0.5.10-gdr0.1
+0.5.18-gdr0.1
 ```

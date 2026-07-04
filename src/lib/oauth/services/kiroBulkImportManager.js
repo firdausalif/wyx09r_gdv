@@ -290,13 +290,38 @@ async function defaultSocialExchange(args) {
   return exchangeAndSaveKiroSocialConnection(args);
 }
 
+// Proxy-friendly default timeouts. Playwright defaults are 30s for both, which
+// is too short when routing through SOCKS5/HTTP proxies (residential rotating
+// proxies can take 5-10s per new connection just for the handshake). These
+// apply to EVERY page created from this context, so all bulk automation
+// providers (Kiro, CodeBuddy, AutoClaw, Qoder, Cloudflare) inherit them.
+//
+// - navigationTimeout: page.goto(), page.goBack(), page.goForward(),
+//   page.reload(), page.waitForURL(), page.waitForLoadState()
+// - defaultTimeout: page.waitForSelector(), page.click(), page.fill(),
+//   locator.isVisible(), etc. (any auto-waiting assertion)
+//
+// Individual call sites can still pass a shorter `timeout` option to override
+// these for fast-fail cases (e.g. "wrong password" detection).
+const BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS = 120_000; // 2 minutes
+const BULK_IMPORT_DEFAULT_TIMEOUT_MS = 60_000; // 1 minute
+
 export async function createFreshContext(browser, { locale = "en-US" } = {}) {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
     locale,
+    // Context-level defaults — inherited by every page created from this context.
+    // Playwright supports these in BrowserContextOptions since v1.x.
+    defaultNavigationTimeout: BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS,
+    defaultTimeout: BULK_IMPORT_DEFAULT_TIMEOUT_MS,
   });
   const page = await context.newPage();
+  // Belt-and-suspenders: also set on the page directly so any code that creates
+  // additional pages from the same context via context.newPage() still benefits
+  // if the context-level defaults were stripped by a Playwright version quirk.
+  page.setDefaultNavigationTimeout(BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS);
+  page.setDefaultTimeout(BULK_IMPORT_DEFAULT_TIMEOUT_MS);
   return { context, page };
 }
 
@@ -344,6 +369,10 @@ async function relaunchAsHeaded(account) {
     newContext = await newBrowser.newContext({
       viewport: null,
       ...(storageState ? { storageState } : {}),
+      // Match the proxy-friendly defaults from createFreshContext so manual
+      // assist sessions (CAPTCHA, 2FA) don't time out on slow proxies either.
+      defaultNavigationTimeout: BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS,
+      defaultTimeout: BULK_IMPORT_DEFAULT_TIMEOUT_MS,
     });
   } catch {
     await newBrowser.close().catch(() => null);
@@ -351,6 +380,8 @@ async function relaunchAsHeaded(account) {
   }
 
   const newPage = await newContext.newPage();
+  newPage.setDefaultNavigationTimeout(BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS);
+  newPage.setDefaultTimeout(BULK_IMPORT_DEFAULT_TIMEOUT_MS);
   if (lastUrl) {
     try {
       await newPage.goto(lastUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });

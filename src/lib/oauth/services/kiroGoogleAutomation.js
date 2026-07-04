@@ -1648,6 +1648,10 @@ export async function runGoogleAccountAutomation({
       };
     }
 
+    // Wrap the entire loop body in a try-catch so that "Target page, context
+    // or browser has been closed" errors (which happen when the proxy drops
+    // mid-navigation and Chromium kills the page) don't crash the worker.
+    // Instead, return needs_manual so the user can finish in the browser.
     try {
       const currentUrl = page.url();
       const urlObj = new URL(currentUrl);
@@ -1658,104 +1662,119 @@ export async function runGoogleAccountAutomation({
       }
     } catch {}
 
-    const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
-    if (handledGoogleConsent) {
-      continue;
-    }
+    try {
+      const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
+      if (handledGoogleConsent) {
+        continue;
+      }
 
-    const text = await readPageText(page);
-    if (includesAny(text, INVALID_CREDENTIAL_MARKERS)) {
-      reportStep("invalid_credentials", "Google rejected the supplied email or password");
-      return {
-        status: "failed_invalid_credentials",
-        error: "Google rejected the supplied email or password.",
-      };
-    }
+      const text = await readPageText(page);
+      if (includesAny(text, INVALID_CREDENTIAL_MARKERS)) {
+        reportStep("invalid_credentials", "Google rejected the supplied email or password");
+        return {
+          status: "failed_invalid_credentials",
+          error: "Google rejected the supplied email or password.",
+        };
+      }
 
-    if (includesAny(text, RESTRICTED_ACCOUNT_MARKERS)) {
-      reportStep("account_restricted", "Account is restricted, suspended, or banned by the provider");
-      return {
-        status: "failed_restricted",
-        error: "Account is restricted, suspended, or banned. Skipping.",
-      };
-    }
+      if (includesAny(text, RESTRICTED_ACCOUNT_MARKERS)) {
+        reportStep("account_restricted", "Account is restricted, suspended, or banned by the provider");
+        return {
+          status: "failed_restricted",
+          error: "Account is restricted, suspended, or banned. Skipping.",
+        };
+      }
 
-    if (includesAny(text, MANUAL_ASSIST_MARKERS)) {
-      reportStep("manual_assist_required", "Google requested CAPTCHA, 2FA, or recovery verification");
-      return {
-        status: "needs_manual",
-        error: "Manual assist required in the browser session (CAPTCHA, 2FA, recovery, or suspicious-login challenge).",
-      };
-    }
+      if (includesAny(text, MANUAL_ASSIST_MARKERS)) {
+        reportStep("manual_assist_required", "Google requested CAPTCHA, 2FA, or recovery verification");
+        return {
+          status: "needs_manual",
+          error: "Manual assist required in the browser session (CAPTCHA, 2FA, recovery, or suspicious-login challenge).",
+        };
+      }
 
-    const handledOnboarding = await handleGoogleOnboarding(page, text);
-    if (handledOnboarding) {
-      reportStep("google_onboarding", "Accepted Google onboarding or privacy prompt");
-      continue;
-    }
+      const handledOnboarding = await handleGoogleOnboarding(page, text);
+      if (handledOnboarding) {
+        reportStep("google_onboarding", "Accepted Google onboarding or privacy prompt");
+        continue;
+      }
 
-    const handledProviderGate = await handleProviderLoginGate(page, reportStep);
-    if (handledProviderGate) {
-      continue;
-    }
+      const handledProviderGate = await handleProviderLoginGate(page, reportStep);
+      if (handledProviderGate) {
+        continue;
+      }
 
-    const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
-    if (handledProviderOnboarding) {
-      continue;
-    }
+      const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
+      if (handledProviderOnboarding) {
+        continue;
+      }
 
-    const nextEmailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
-    if (nextEmailInput) {
-      reportStep("entering_email", "Entering Google email");
-      const filled = await fillInputResilient(nextEmailInput, email);
-      if (filled) {
-        reportStep("submitting_email", "Submitting email");
-        await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
-        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
-        // Navigation guard: wait for URL to leave /identifier? path so the
-        // loop does not re-detect the stale email input and re-submit.
-        try {
-          await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
-        } catch {
-          // Page didn't navigate; the loop will handle retry.
+      const nextEmailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
+      if (nextEmailInput) {
+        reportStep("entering_email", "Entering Google email");
+        const filled = await fillInputResilient(nextEmailInput, email);
+        if (filled) {
+          reportStep("submitting_email", "Submitting email");
+          await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
+          await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+          // Navigation guard: wait for URL to leave /identifier? path so the
+          // loop does not re-detect the stale email input and re-submit.
+          try {
+            await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
+          } catch {
+            // Page didn't navigate; the loop will handle retry.
+          }
+          await page.waitForTimeout(2000);
+        } else {
+          reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
         }
+        continue;
+      }
+
+      const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
+      if (passwordInput) {
+        reportStep("entering_password", "Entering Google password");
+        await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
+        await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+        await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
+        const filled = await fillInputResilient(passwordInput, password);
+        if (filled) {
+          reportStep("submitting_password", "Submitting password");
+          await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
+          await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+        } else {
+          reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
+        }
+        try {
+          await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
+        } catch {}
         await page.waitForTimeout(2000);
-      } else {
-        reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
+        continue;
       }
-      continue;
-    }
 
-    const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
-    if (passwordInput) {
-      reportStep("entering_password", "Entering Google password");
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
-      await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
-      await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
-      const filled = await fillInputResilient(passwordInput, password);
-      if (filled) {
-        reportStep("submitting_password", "Submitting password");
-        await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
-        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
-      } else {
-        reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
+      const clickedApprove = await clickFirstVisible(page, APPROVE_BUTTON_SELECTORS);
+      if (clickedApprove) {
+        reportStep("approving_consent", `Approving Google or ${serviceLabel} consent`);
+        await page.waitForTimeout(700);
+        continue;
       }
-      try {
-        await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
-      } catch {}
-      await page.waitForTimeout(2000);
-      continue;
-    }
 
-    const clickedApprove = await clickFirstVisible(page, APPROVE_BUTTON_SELECTORS);
-    if (clickedApprove) {
-      reportStep("approving_consent", `Approving Google or ${serviceLabel} consent`);
+      reportStep("waiting_for_next_screen", `Waiting for the next Google or ${serviceLabel} screen`);
       await page.waitForTimeout(700);
-      continue;
+    } catch (loopError) {
+      // Page/context/browser closed (proxy drop, OOM, crash). Don't crash the
+      // worker — return needs_manual so the user can retry or finish manually.
+      const msg = (loopError.message || String(loopError)).toLowerCase();
+      if (msg.includes("closed") || msg.includes("destroyed") || msg.includes("target page") || msg.includes("browser has been closed")) {
+        reportStep("manual_assist_required", `Browser session interrupted: ${(loopError.message || "").slice(0, 100)}`);
+        return {
+          status: "needs_manual",
+          error: `Browser session was interrupted (page/context closed). ${(loopError.message || "").slice(0, 120)}`,
+        };
+      }
+      // Other errors — re-throw to let the worker catch handle it.
+      throw loopError;
     }
-
-    reportStep("waiting_for_next_screen", `Waiting for the next Google or ${serviceLabel} screen`);
-    await page.waitForTimeout(700);
   }
 
   reportStep("manual_assist_required", `Flow did not complete ${serviceLabel} authorization automatically`);

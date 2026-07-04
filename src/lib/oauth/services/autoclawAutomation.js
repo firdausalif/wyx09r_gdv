@@ -1,8 +1,18 @@
 import { runGoogleAccountAutomation } from "./kiroGoogleAutomation.js";
 
 const AUTOCLAW_WEB_URL = "https://autoclaw.z.ai/web/";
-const DEFAULT_SHORT_TIMEOUT_MS = 90_000;
+const DEFAULT_SHORT_TIMEOUT_MS = 5 * 60_000; // 5 minutes — proxy flows need room
 const DEFAULT_MANUAL_TIMEOUT_MS = 15 * 60_000;
+
+// Proxy-friendly timeouts: when routing through a SOCKS5/HTTP proxy, page
+// loads, popups, and selector renders take much longer than direct. These
+// budgets give each phase enough room to settle before we declare failure.
+const NAV_TIMEOUT_MS = 90_000;
+const DOM_READY_TIMEOUT_MS = 60_000;
+const LOGIN_BUTTON_TIMEOUT_MS = 60_000;
+const ZAI_BUTTON_TIMEOUT_MS = 60_000;
+const POPUP_WAIT_TIMEOUT_MS = 30_000;
+const ZAI_FORM_TIMEOUT_MS = 60_000;
 
 // Selectors for AutoClaw web login gate
 const AUTOCLAW_LOGIN_BUTTON_SELECTORS = [
@@ -104,17 +114,226 @@ export function createAutoclawTokenMonitor(context, timeoutMs = DEFAULT_MANUAL_T
 }
 
 /**
- * Run the AutoClaw web login flow:
+ * Wait for a DOM load state with periodic step reporting so the UI does not
+ * look like the worker is hung while the page is still loading through a slow
+ * proxy. Reports every ~5s with elapsed seconds.
  *
- * 1. Navigate to autoclaw.z.ai/web/
- * 2. Click login/register button → login modal appears
- * 3. Click "Continue with Zai" → new tab opens to chat.z.ai/auth
- * 4. On the Z.ai tab, runGoogleAccountAutomation handles:
- *    a. Click "Continue with Google" on Z.ai (via handleProviderLoginGate)
- *    b. Google email + password + workspace terms + consent
- *    c. Z.ai authorize page (checkbox + Continue)
- * 5. Redirect back to autoclaw.z.ai/web/?webOAuthCallback=zai
- * 6. Token monitor extracts access_token + refresh_token + deviceId from localStorage
+ * Resolves true if the load state was reached, false on timeout.
+ */
+async function waitForLoadStateWithProgress(page, state, timeoutMs, reportStep, stepId, label) {
+  const startedAt = Date.now();
+  reportStep(stepId, `${label} (0s)`);
+
+  // Playwright's waitForLoadState rejects on timeout; we wrap it so we can
+  // keep reporting progress and return a boolean instead of throwing.
+  let done = false;
+  const waitPromise = page
+    .waitForLoadState(state, { timeout: timeoutMs })
+    .then(() => {
+      done = true;
+    })
+    .catch(() => {
+      done = false;
+    });
+
+  // Progress reporter loop — breaks as soon as the wait settles.
+  while (!done) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    const isSettled = await Promise.race([
+      waitPromise.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 5000)),
+    ]);
+    if (isSettled) break;
+    reportStep(stepId, `${label} (${elapsed}s)`);
+  }
+
+  await waitPromise;
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  if (done) {
+    reportStep(stepId, `${label} done (${elapsed}s)`);
+  } else {
+    reportStep(stepId, `${label} timed out after ${elapsed}s — continuing anyway`);
+  }
+  return done;
+}
+
+/**
+ * Poll for the first visible matching selector until timeout, reporting
+ * progress every ~5s. Returns true if a selector became visible and was
+ * clicked, false on timeout.
+ *
+ * This replaces the old one-shot clickFirstVisible (2s per selector) which
+ * failed immediately when the page was still loading through a slow proxy.
+ */
+async function pollAndClickFirstVisible(page, selectors, {
+  timeoutMs,
+  reportStep,
+  stepId,
+  notFoundMessage,
+  clickTimeoutMs = 5_000,
+  pollIntervalMs = 1_000,
+} = {}) {
+  const startedAt = Date.now();
+  let lastReportedElapsed = -1;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    // Report at most once per second to avoid flooding the snapshot log.
+    if (elapsed !== lastReportedElapsed) {
+      reportStep(stepId, `${notFoundMessage} (${elapsed}s)`);
+      lastReportedElapsed = elapsed;
+    }
+
+    for (const sel of selectors) {
+      try {
+        const loc = page.locator(sel).first();
+        const visible = await loc.isVisible({ timeout: 1_000 }).catch(() => false);
+        if (visible) {
+          const clicked = await loc
+            .click({ timeout: clickTimeoutMs })
+            .then(() => true)
+            .catch(() => false);
+          if (clicked) {
+            reportStep(stepId, `${notFoundMessage} — clicked (${elapsed}s)`);
+            return true;
+          }
+        }
+      } catch {
+        // keep polling
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  reportStep(stepId, `${notFoundMessage} — not found after ${elapsed}s`);
+  return false;
+}
+
+/**
+ * Wait for the Z.ai auth popup tab to open, reporting progress while we wait.
+ * Returns { popup, isPopup }. If no popup opens within timeout, falls back to
+ * the main page (same-tab redirect).
+ */
+async function waitForZaiPopup(context, mainPage, timeoutMs, reportStep) {
+  const startedAt = Date.now();
+  reportStep("waiting_zai_popup", "Waiting for Z.ai auth popup to open (0s)");
+
+  let popup = null;
+  let lastReportedElapsed = -1;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsed !== lastReportedElapsed) {
+      reportStep("waiting_zai_popup", `Waiting for Z.ai auth popup to open (${elapsed}s)`);
+      lastReportedElapsed = elapsed;
+    }
+
+    try {
+      popup = await context.waitForEvent("page", { timeout: 2_000 });
+      if (popup) {
+        reportStep("zai_popup_opened", `Z.ai auth popup tab opened (${elapsed}s) — waiting for commit`);
+        // "commit" = HTML received and parsed, but CSS/JS/fonts may still be
+        // loading. This is the earliest reliable point to start interacting.
+        await waitForLoadStateWithProgress(
+          popup,
+          "commit",
+          DOM_READY_TIMEOUT_MS,
+          reportStep,
+          "zai_popup_dom_loading",
+          "Z.ai auth popup loading"
+        );
+        return { popup, isPopup: true };
+      }
+    } catch {
+      // No popup within this 2s slice — keep polling until the overall budget
+      // runs out, then fall back to same-tab.
+    }
+  }
+
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  reportStep("zai_same_tab", `No popup detected after ${elapsed}s — Z.ai auth may load in same tab`);
+  return { popup: mainPage, isPopup: false };
+}
+
+/**
+ * Wait for the Z.ai auth form (or Google button) to render on the popup/main
+ * page, reporting progress while we wait. Returns true if ready, false on
+ * timeout.
+ */
+async function waitForZaiAuthReady(page, timeoutMs, reportStep) {
+  const zaiReadySelectors = [
+    'button:has-text("Continue with Google")',
+    'button:has-text("Google")',
+    'a:has-text("Google")',
+    '[role="button"]:has-text("Google")',
+    'button.ButtonContinueWithGoogle',
+    'button[class*="ContinueWithGoogle"]',
+    'input[type="email"]',
+    'input[autocomplete="username"]',
+    'input[placeholder*="Email" i]',
+    'button:has-text("Login")',
+    'button:has-text("Sign in")',
+  ].join(", ");
+
+  const startedAt = Date.now();
+  let lastReportedElapsed = -1;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsed !== lastReportedElapsed) {
+      reportStep("waiting_zai_auth_form", `Waiting for Z.ai auth page to render (${elapsed}s)`);
+      lastReportedElapsed = elapsed;
+    }
+
+    try {
+      await page.waitForSelector(zaiReadySelectors, {
+        state: "visible",
+        timeout: 3_000,
+      });
+      reportStep("zai_ready", `Z.ai auth page ready (${elapsed}s) — starting automation`);
+      return true;
+    } catch {
+      // keep polling
+    }
+  }
+
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  reportStep("zai_auth_form_timeout", `Z.ai auth page did not render login form after ${elapsed}s`);
+  return false;
+}
+
+/**
+ * Check whether the token monitor has already resolved (token extracted). Used
+ * between steps so we can short-circuit the rest of the flow if the callback
+ * landed early (e.g. user already logged in, or a previous tab kept tokens).
+ *
+ * Returns the resolved value or null if still pending.
+ */
+async function peekSuccessPromise(successPromise) {
+  if (!successPromise) return null;
+  return Promise.race([
+    successPromise.then((v) => v).catch(() => null),
+    new Promise((resolve) => setTimeout(() => resolve(null), 200)),
+  ]);
+}
+
+/**
+ * Run the AutoClaw web login flow with explicit step-by-step reporting and
+ * proxy-friendly polling. Each phase waits for the DOM to settle before
+ * advancing, and reports progress so the worker UI never looks frozen while
+ * a slow proxy is still loading the page.
+ *
+ * Phases:
+ *   1. opening_autoclaw_web      — goto autoclaw.z.ai/web/ + DOM ready
+ *   2. clicking_autoclaw_login   — poll for login button, click when visible
+ *   3. clicking_continue_with_zai— poll for "Continue with Zai", click when visible
+ *   4. waiting_zai_popup         — wait for popup tab (or same-tab fallback)
+ *   5. zai_popup_dom_loading     — wait for popup DOM to load
+ *   6. waiting_zai_auth_form     — poll for Z.ai login form / Google button
+ *   7. starting_google_login     — delegate to runGoogleAccountAutomation
+ *   8. autoclaw_token_extracted  — token monitor resolved
  *
  * Tab handling:
  * - "Continue with Zai" opens a popup tab (chat.z.ai/auth)
@@ -134,14 +353,71 @@ export async function runAutoclawGoogleAutomation({
 }) {
   const reportStep = (step, message) => onStep?.(step, message);
 
-  // 1. Navigate to AutoClaw web app
-  reportStep("opening_autoclaw_web", "Opening AutoClaw web app");
-  await page.goto(AUTOCLAW_WEB_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(2000 + Math.floor(Math.random() * 1500));
+  // 0. Short-circuit if the token monitor already has tokens (rare, but
+  //    handles the case where a prior tab survived into this worker).
+  const earlySuccess = await peekSuccessPromise(callbackPromise);
+  if (earlySuccess) {
+    reportStep("autoclaw_token_extracted", "AutoClaw token already present — skipping automation");
+    return { status: "success", ...earlySuccess };
+  }
 
-  // 2. Click login/register button to open login modal
-  reportStep("clicking_autoclaw_login", "Clicking AutoClaw login button");
-  const loginClicked = await clickFirstVisible(page, AUTOCLAW_LOGIN_BUTTON_SELECTORS);
+  // 1. Navigate to AutoClaw web app. Use "domcontentloaded" (not "load") because
+  //    the SPA's "load" event waits for ALL resources (fonts, analytics, CDN
+  //    images) which can take very long through a proxy. DOM-ready is enough to
+  //    start polling for the login button.
+  //
+  //    Residential rotating proxies are intermittent — some IPs in the pool
+  //    can't reach autoclaw.z.ai and return ERR_TIMED_OUT or
+  //    ERR_SSL_PROTOCOL_ERROR. Retry up to 3 times to roll a different IP.
+  const MAX_NAV_RETRIES = 3;
+  const navWaitStrategies = ["domcontentloaded", "commit"];
+  let navOk = false;
+  let lastNavError = null;
+
+  for (let attempt = 1; attempt <= MAX_NAV_RETRIES; attempt++) {
+    for (const waitStrategy of navWaitStrategies) {
+      reportStep("opening_autoclaw_web", `Opening AutoClaw web app (attempt ${attempt}/${MAX_NAV_RETRIES}, ${waitStrategy})`);
+      try {
+        await page.goto(AUTOCLAW_WEB_URL, { waitUntil: waitStrategy, timeout: NAV_TIMEOUT_MS });
+        navOk = true;
+        reportStep("opening_autoclaw_web", `AutoClaw web app loaded (attempt ${attempt}, ${waitStrategy})`);
+        break;
+      } catch (e) {
+        lastNavError = e;
+        const errMsg = (e.message || String(e)).slice(0, 120);
+        // Common proxy errors: ERR_TIMED_OUT, ERR_SSL_PROTOCOL_ERROR,
+        // ERR_CONNECTION_CLOSED, ERR_PROXY_CONNECTION_FAILED
+        reportStep("opening_autoclaw_web", `${waitStrategy} failed (attempt ${attempt}): ${errMsg}`);
+        // Brief pause before retry — gives the proxy pool time to rotate IP.
+        await page.waitForTimeout(2000 + Math.floor(Math.random() * 2000));
+      }
+    }
+    if (navOk) break;
+  }
+
+  if (!navOk) {
+    // All retries exhausted. Still try to continue — the page may have
+    // partially loaded and the polling loop can still find the button. If the
+    // page is truly blank, polling will timeout and report a clear error.
+    reportStep("opening_autoclaw_web", `All ${MAX_NAV_RETRIES} navigation attempts failed — continuing to poll anyway`);
+  }
+
+  if (navOk) {
+    // Give the SPA a moment to paint its initial shell. Do NOT wait for "load"
+    // — it depends on external resources that are slow through proxies.
+    reportStep("autoclaw_web_dom_loading", "AutoClaw web app DOM ready — waiting for SPA render");
+    await page.waitForTimeout(2000 + Math.floor(Math.random() * 1500));
+  }
+
+  // 2. Click login/register button to open login modal — poll until visible
+  //    (proxy may take a while to render the SPA).
+  reportStep("clicking_autoclaw_login", "Looking for AutoClaw login button");
+  const loginClicked = await pollAndClickFirstVisible(page, AUTOCLAW_LOGIN_BUTTON_SELECTORS, {
+    timeoutMs: LOGIN_BUTTON_TIMEOUT_MS,
+    reportStep,
+    stepId: "clicking_autoclaw_login",
+    notFoundMessage: "Looking for AutoClaw login button",
+  });
   if (!loginClicked) {
     return {
       status: "failed",
@@ -150,9 +426,14 @@ export async function runAutoclawGoogleAutomation({
   }
   await page.waitForTimeout(1500 + Math.floor(Math.random() * 1000));
 
-  // 3. Click "Continue with Zai" — opens a new tab (popup)
-  reportStep("clicking_continue_with_zai", "Clicking Continue with Zai");
-  const zaiClicked = await clickFirstVisible(page, AUTOCLAW_ZAI_BUTTON_SELECTORS);
+  // 3. Click "Continue with Zai" — opens a new tab (popup). Poll until visible.
+  reportStep("clicking_continue_with_zai", "Looking for Continue with Zai button");
+  const zaiClicked = await pollAndClickFirstVisible(page, AUTOCLAW_ZAI_BUTTON_SELECTORS, {
+    timeoutMs: ZAI_BUTTON_TIMEOUT_MS,
+    reportStep,
+    stepId: "clicking_continue_with_zai",
+    notFoundMessage: "Looking for Continue with Zai button",
+  });
   if (!zaiClicked) {
     return {
       status: "failed",
@@ -160,48 +441,28 @@ export async function runAutoclawGoogleAutomation({
     };
   }
 
-  // 4. Wait for the Z.ai auth popup tab to open.
-  //    Fallback: if no popup opens within 10s, assume same-tab redirect.
+  // 4. Wait for the Z.ai auth popup tab to open. Falls back to same-tab if
+  //    no popup appears within the timeout (some proxy setups force same-tab
+  //    redirects by blocking window.open).
   const context = page.context();
-  let popup = null;
-  let isPopup = false;
+  const { popup, isPopup } = await waitForZaiPopup(context, page, POPUP_WAIT_TIMEOUT_MS, reportStep);
 
-  try {
-    popup = await context.waitForEvent("page", { timeout: 10_000 });
-    await popup.waitForLoadState("domcontentloaded", { timeout: 30_000 });
-    isPopup = true;
-    reportStep("zai_popup_opened", "Z.ai auth popup tab opened — starting Google login");
-  } catch {
-    reportStep("zai_same_tab", "No popup detected — Z.ai auth may load in same tab");
-    popup = page;
-  }
-
-  try {
-    await popup.waitForSelector(
-      [
-        'button:has-text("Continue with Google")',
-        'button:has-text("Google")',
-        'a:has-text("Google")',
-        '[role="button"]:has-text("Google")',
-        'button.ButtonContinueWithGoogle',
-        'button[class*="ContinueWithGoogle"]',
-        'input[type="email"]',
-        'input[autocomplete="username"]',
-        'input[placeholder*="Email" i]',
-        'button:has-text("Login")',
-        'button:has-text("Sign in")',
-      ].join(", "),
-      { state: "visible", timeout: 15_000 }
-    );
-  } catch {
+  // 5. Wait for the Z.ai auth form / Google button to render. This is the
+  //    last AutoClaw-specific gate before delegating to the shared Google
+  //    automation loop.
+  const zaiReady = await waitForZaiAuthReady(popup, ZAI_FORM_TIMEOUT_MS, reportStep);
+  if (!zaiReady) {
+    // Close the popup if we opened one and could not use it.
+    if (isPopup && popup !== page) {
+      await popup.close().catch(() => null);
+    }
     return {
       status: "failed",
       error: "Z.ai auth page did not render login form or Google button.",
     };
   }
-  reportStep("zai_ready", "Z.ai auth page ready — starting automation");
 
-  // 5. Run Google account automation on the popup (or main page).
+  // 6. Run Google account automation on the popup (or main page).
   //    skipNavigation=true because we're already on the Z.ai auth page.
   //    handleProviderLoginGate clicks "Continue with Google" on Z.ai,
   //    then the loop handles Google email/password/consent/workspace-terms,
@@ -222,28 +483,11 @@ export async function runAutoclawGoogleAutomation({
     onStep,
   });
 
-  // 6. Cleanup: close the popup tab if it was a separate tab.
+  // 7. Cleanup: close the popup tab if it was a separate tab.
   //    Main page (tab 0) stays open — context close handled by bulk import manager.
   if (isPopup && popup !== page) {
     await popup.close().catch(() => null);
   }
 
   return result;
-}
-
-// --- helpers ---
-
-async function clickFirstVisible(page, selectors) {
-  for (const sel of selectors) {
-    try {
-      const loc = page.locator(sel).first();
-      if (await loc.isVisible({ timeout: 2000 })) {
-        await loc.click({ timeout: 5000 });
-        return true;
-      }
-    } catch {
-      // try next selector
-    }
-  }
-  return false;
 }

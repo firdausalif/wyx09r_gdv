@@ -127,6 +127,28 @@ async function loadRuntimeCloakBrowser(runtime) {
   }
 }
 
+// When a proxy is active, Google login pages are bypassed from the proxy.
+// Google aggressively blocks automated logins from proxy/ISP IPs with
+// ERR_ABORTED / ERR_CONNECTION_CLOSED. By bypassing Google domains, the
+// Google OAuth flow runs on the user's direct IP while AutoClaw / Z.ai /
+// provider traffic still goes through the proxy.
+//
+// Format: Chromium --proxy-bypass-list uses ';' as separator.
+const GOOGLE_PROXY_BYPASS_DOMAINS = [
+  "*.google.com",
+  "*.googleapis.com",
+  "*.gstatic.com",
+  "*.googleusercontent.com",
+  "*.accounts.google.com",
+  "*.signin.google.com",
+  "*.myaccount.google.com",
+].join(";");
+
+function buildProxyBypassArgs(proxyUrl, existingArgs = []) {
+  if (!proxyUrl) return existingArgs;
+  return [...existingArgs, `--proxy-bypass-list=${GOOGLE_PROXY_BYPASS_DOMAINS}`];
+}
+
 async function launchChromium({ proxyUrl, headless = true, args = [] } = {}) {
   let chromium;
   const runtime = await loadRuntimeHelper("playwrightRuntime");
@@ -168,7 +190,8 @@ async function launchChromium({ proxyUrl, headless = true, args = [] } = {}) {
     chromium = installedRuntimePlaywright.chromium;
   }
   const options = { headless };
-  if (args.length) options.args = args;
+  const finalArgs = buildProxyBypassArgs(proxyUrl, args);
+  if (finalArgs.length) options.args = finalArgs;
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) options.proxy = proxy;
   return chromium.launch(options);
@@ -243,7 +266,8 @@ async function launchCamoufox({ proxyUrl, headless = true, args = [] } = {}) {
 
   const camoufoxOptions = await camoufox.launchOptions({ headless });
   const launchOptions = { ...camoufoxOptions };
-  if (args.length) launchOptions.args = [...(launchOptions.args || []), ...args];
+  const finalArgs = buildProxyBypassArgs(proxyUrl, [...(launchOptions.args || []), ...args]);
+  if (finalArgs.length) launchOptions.args = finalArgs;
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) launchOptions.proxy = proxy;
 
@@ -265,7 +289,8 @@ async function launchPatchright({ proxyUrl, headless = true, args = [], channel 
   const browserType = channel === "chrome" && patchright?.chromium ? patchright.chromium : patchright?.chromium;
   if (!browserType?.launch) throw Object.assign(new Error("patchright loaded but chromium.launch is unavailable"), { code: "PATCHRIGHT_API_MISMATCH" });
   const options = { headless };
-  if (args.length) options.args = args;
+  const finalArgs = buildProxyBypassArgs(proxyUrl, args);
+  if (finalArgs.length) options.args = finalArgs;
   if (channel) options.channel = channel;
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) options.proxy = proxy;
@@ -282,7 +307,8 @@ async function launchCloakBrowser({ proxyUrl, headless = true, args = [] } = {})
   const launcher = cloakbrowser?.launch || cloakbrowser?.default?.launch || cloakbrowser?.chromium?.launch;
   if (!launcher) throw Object.assign(new Error("cloakbrowser loaded but no launch() API is available"), { code: "CLOAKBROWSER_API_MISMATCH" });
   const options = { headless };
-  if (args.length) options.args = args;
+  const finalArgs = buildProxyBypassArgs(proxyUrl, args);
+  if (finalArgs.length) options.args = finalArgs;
   const proxy = buildBrowserProxyOption(proxyUrl);
   if (proxy) options.proxy = proxy;
   return launcher(options);

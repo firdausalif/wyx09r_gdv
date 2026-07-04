@@ -102,21 +102,48 @@ export default function BulkAccountAutomationModal({
   serviceName,
 }) {
   const storageKey = `${provider}-bulk-import-active-job`;
+  const configStorageKey = `${provider}-bulk-import-config`;
   const completedRefreshJobsRef = useRef(new Set());
+
+  // Load cached config from localStorage on first render. This preserves the
+  // user's engine/proxy/concurrency choices across modal open/close cycles so
+  // they don't have to reconfigure every time.
+  const cachedConfig = useMemo(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(configStorageKey);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }, [configStorageKey]);
+
   const [bulkText, setBulkText] = useState("");
-  const [concurrency, setConcurrency] = useState(String(DEFAULT_CONCURRENCY));
-  const [autoConcurrency, setAutoConcurrency] = useState(true);
+  const [concurrency, setConcurrency] = useState(String(cachedConfig.concurrency ?? DEFAULT_CONCURRENCY));
+  const [autoConcurrency, setAutoConcurrency] = useState(cachedConfig.autoConcurrency ?? true);
   const [systemSpecInfo, setSystemSpecInfo] = useState(null);
   const [systemSpecLoading, setSystemSpecLoading] = useState(false);
-  const [engine, setEngine] = useState(DEFAULT_ENGINE);
-  const [headless, setHeadless] = useState(false);
-  const [proxyPoolId, setProxyPoolId] = useState("");
-  const [proxyUrl, setProxyUrl] = useState("");
+  const [engine, setEngine] = useState(cachedConfig.engine ?? DEFAULT_ENGINE);
+  const [headless, setHeadless] = useState(cachedConfig.headless ?? false);
+  const [proxyPoolId, setProxyPoolId] = useState(cachedConfig.proxyPoolId ?? "");
+  const [proxyUrl, setProxyUrl] = useState(cachedConfig.proxyUrl ?? "");
   const [proxyPools, setProxyPools] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [jobRestoreNotice, setJobRestoreNotice] = useState(null);
+
+  // Persist config to localStorage whenever it changes. Debounce via
+  // useEffect so we only write once per render cycle.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const config = { engine, headless, proxyPoolId, proxyUrl, autoConcurrency, concurrency };
+      window.localStorage.setItem(configStorageKey, JSON.stringify(config));
+    } catch {
+      // localStorage might be full or disabled — ignore
+    }
+  }, [configStorageKey, engine, headless, proxyPoolId, proxyUrl, autoConcurrency, concurrency]);
 
   const runningJob = activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status);
   const finishedJob = activeJob && TERMINAL_JOB_STATUSES.has(activeJob.status);
@@ -137,10 +164,6 @@ export default function BulkAccountAutomationModal({
 
   const resetState = useCallback(() => {
     setBulkText("");
-    setConcurrency(String(DEFAULT_CONCURRENCY));
-    setAutoConcurrency(true);
-    setProxyPoolId("");
-    setProxyUrl("");
     setActiveJob(null);
     setError(null);
     setImporting(false);

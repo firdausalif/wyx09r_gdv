@@ -1,146 +1,64 @@
-# 9Router - FREE AI Router & Token Saver
+# GDRouter CLI
 
-**Never stop coding. Save 20-40% tokens with RTK + auto-fallback to FREE & cheap AI models.**
+CLI package untuk menjalankan server GDRouter lokal.
 
-**Connect All AI Code Tools (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) to 40+ AI Providers & 100+ Models.**
+Version: `v0.5.10-gdr0.1`
 
-[![npm](https://img.shields.io/npm/v/wgdv9r.svg)](https://www.npmjs.com/package/wgdv9r)
-[![Downloads](https://img.shields.io/npm/dm/wgdv9r.svg)](https://www.npmjs.com/package/wgdv9r)
-[![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
-[![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
-[![License](https://img.shields.io/npm/l/wyxrouter.svg)](https://github.com/Wisyam/9router_wyx0/blob/master/LICENSE)
-
-<a href="https://trendshift.io/repositories/22628" target="_blank"><img src="https://trendshift.io/api/badge/repositories/22628" alt="decolua%2F9router | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-[🌐 Website](https://9router.com) • [📖 Full Docs](https://github.com/decolua/9router)
-
----
-
-## 🤔 Why 9Router?
-
-**Stop wasting money, tokens and hitting limits:**
-
-- ❌ Subscription quota expires unused every month
-- ❌ Rate limits stop you mid-coding
-- ❌ Tool outputs (git diff, grep, ls...) burn tokens fast
-- ❌ Expensive APIs ($20-50/month per provider)
-
-**9Router solves this:**
-
-- ✅ **RTK Token Saver** - Auto-compress tool_result, save 20-40% tokens
-- ✅ **Maximize subscriptions** - Track quota, use every bit before reset
-- ✅ **Auto fallback** - Subscription → Cheap → Free, zero downtime
-- ✅ **Multi-account** - Round-robin between accounts per provider
-- ✅ **Universal** - Works with any OpenAI/Claude-compatible CLI
-
----
-
-## ⚡ Quick Start
-
-**Option 1 — npm (recommended for desktop):**
+## Command
 
 ```bash
-npm install -g wyxrouter
-wyxrouter
-
-# Or run directly with npx after package is published
-npx wgdv9r
+gdrouter
 ```
 
-**WYx09r GDV fork — install from source:**
+## Install Dari Source Pack
+
+Dari root repository:
 
 ```bash
-git clone https://github.com/firdausalif/wyx09r_gdv.git
-cd wyx09r_gdv
-npm install
 npm run cli:pack
-npm install -g ./wgdv9r-*.tgz
-wgdv9r --skip-update
+npm install -g ./gdrouter-*.tgz
+gdrouter --skip-update
 ```
 
-`--skip-update` keeps this fork installed instead of replacing it with upstream package.
+## Development
 
-Cloudflare automation formats:
-
-```txt
-google|gmail@example.com|google_password|optional_account_id
-user@example.com|cloudflare_password|optional_account_id
-apiToken|accountId|optionalName
-```
-
-**Option 2 — Docker (server/VPS):**
+Dari root repository:
 
 ```bash
-docker run -d --name 9router -p 20128:20128 \
-  -v "$HOME/.9router:/app/data" -e DATA_DIR=/app/data \
-  decolua/9router:latest
+npm --prefix cli install
+npm --prefix cli run dev
 ```
 
-Published images: [Docker Hub](https://hub.docker.com/r/decolua/9router) • [GHCR](https://github.com/decolua/9router/pkgs/container/9router) (multi-platform amd64/arm64).
-
-🎉 Dashboard opens at `http://localhost:20128`
-
-**2. Connect a FREE provider (no signup needed):**
-
-Dashboard → Providers → Connect **Kiro AI** (free Claude unlimited) or **OpenCode Free** (no auth) → Done!
-
-**3. Use in your CLI tool:**
-
-```
-Claude Code/Codex/OpenClaw/Cursor/Cline Settings:
-  Endpoint: http://localhost:20128/v1
-  API Key:  [copy from dashboard]
-  Model:    kr/claude-sonnet-4.5
-```
-
-That's it! Start coding with FREE AI models.
-
----
-
-## 🚀 CLI Options
+## Build
 
 ```bash
-wgdv9r                    # Start with default settings
-wgdv9r --port 8080        # Custom port
-wgdv9r --no-browser       # Don't open browser
-wgdv9r --skip-update      # Skip auto-update check
-wgdv9r --help             # Show all options
+npm --prefix cli run build
 ```
 
-**Dashboard**: `http://localhost:20128/dashboard`
+## Pack
 
----
+```bash
+npm --prefix cli run pack:cli
+```
 
-## 🛠️ Supported CLI Tools
+## Publish
 
-Claude-Code • OpenClaw • Codex • OpenCode • Cursor • Antigravity • Cline • Continue • Droid • Roo • Copilot • Kilo Code • Gemini CLI • Qwen Code • iFlow • Crush • Crusher • Aider
+```bash
+npm --prefix cli run publish:cli
+```
 
-Any tool supporting OpenAI/Claude-compatible API works.
+## Opsi Umum
 
----
+```bash
+gdrouter --port 8080
+gdrouter --no-browser
+gdrouter --skip-update
+gdrouter --help
+```
 
-## 💾 Data Location
+## Endpoint Default
 
-- **macOS/Linux**: `~/.9router/db/data.sqlite`
-- **Windows**: `%APPDATA%/9router/db/data.sqlite`
-- **Docker**: `/app/data/db/data.sqlite` (mount `$HOME/.9router` to persist)
-
----
-
-## 📚 Documentation
-
-Full docs, advanced setup, video tutorials & development guide:
-
-- **GitHub**: https://github.com/decolua/9router
-- **Full README**: https://github.com/decolua/9router/blob/main/app/README.md
-- **Website**: https://9router.com
-
----
-
-## 🙏 Acknowledgments
-
-- **[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)** - Original Go implementation
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
+```text
+Dashboard: http://localhost:20128/dashboard
+API: http://localhost:20128/v1
+```

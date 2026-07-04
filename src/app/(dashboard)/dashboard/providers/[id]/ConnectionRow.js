@@ -6,7 +6,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, isSelected = false, onSelect, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -135,6 +135,17 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
   return (
     <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
       <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center sm:gap-3">
+        {onSelect && (
+          <button
+            type="button"
+            onClick={onSelect}
+            className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40 sm:mt-0 ${isSelected ? "border-primary bg-primary text-white" : "border-border text-transparent hover:border-primary"}`}
+            aria-pressed={isSelected}
+            aria-label={`${isSelected ? "Deselect" : "Select"} connection ${displayName}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">check</span>
+          </button>
+        )}
         {/* Priority arrows */}
         <div className="flex shrink-0 flex-col">
           <button
@@ -297,6 +308,8 @@ ConnectionRow.propTypes = {
   isOAuth: PropTypes.bool.isRequired,
   isFirst: PropTypes.bool.isRequired,
   isLast: PropTypes.bool.isRequired,
+  isSelected: PropTypes.bool,
+  onSelect: PropTypes.func,
   onMoveUp: PropTypes.func.isRequired,
   onMoveDown: PropTypes.func.isRequired,
   onToggleActive: PropTypes.func.isRequired,

@@ -58,6 +58,22 @@ function AccountStatusBadge({ status }) {
   );
 }
 
+function StepStatusDot({ status }) {
+  const className = status === "done"
+    ? "bg-green-500"
+    : status === "running"
+      ? "bg-blue-500"
+      : status === "failed"
+        ? "bg-red-500"
+        : "bg-border";
+
+  return <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${className}`} />;
+}
+
+StepStatusDot.propTypes = {
+  status: PropTypes.string,
+};
+
 AccountStatusBadge.propTypes = {
   status: PropTypes.string,
 };
@@ -624,6 +640,28 @@ export default function BulkAccountAutomationModal({
                             <p className="text-[11px] uppercase tracking-wide text-text-muted">Current Step</p>
                             <p className="mt-1 text-sm font-medium capitalize">{formatStepLabel(account.currentStep)}</p>
                           </div>
+
+                          {Array.isArray(account.detailedSteps) && account.detailedSteps.length > 0 && (
+                            <div className="mt-3 rounded-lg border border-border/70 bg-sidebar/70 px-3 py-3">
+                              <p className="text-[11px] uppercase tracking-wide text-text-muted">Detailed Steps</p>
+                              <div className="mt-3 space-y-2">
+                                {account.detailedSteps.map((step) => (
+                                  <div key={step.id} className="flex gap-2 text-xs">
+                                    <StepStatusDot status={step.status} />
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="font-medium text-text-main">{step.index}. {step.label}</p>
+                                        <span className="shrink-0 capitalize text-text-muted">{formatStepLabel(step.status)}</span>
+                                      </div>
+                                      {step.message && (
+                                        <p className="mt-0.5 text-text-muted">{step.message}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
 
                           {account.error && (
                             <p className="mt-3 text-xs text-red-500">{account.error}</p>

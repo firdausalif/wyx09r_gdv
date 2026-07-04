@@ -32,7 +32,7 @@ Auto-posts a release announcement to Discord after the
 [IMPROVEMENT]
 - ...
 
-run ```npm update -g wyxrouter```
+run ```npm update -g gdrouter```
 ```
 
 `<TYPE>` is `MAJOR UPDATE` / `FEATURE UPDATE` / `HOTFIX UPDATE` /

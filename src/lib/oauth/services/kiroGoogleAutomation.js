@@ -130,9 +130,16 @@ const GOOGLE_LOGIN_BUTTON_SELECTORS = [
   'button:has-text("Sign up with Google")',
   'button:has-text("Log in with Google")',
   'button:has-text("Continue with Google")',
+  'a:has-text("Continue with Google")',
+  '[role="button"]:has-text("Continue with Google")',
+  'button:has-text("Sign in with Google")',
+  'a:has-text("Sign in with Google")',
+  '[role="button"]:has-text("Sign in with Google")',
   'button:has-text("Google")',
   'a:has-text("Google")',
   'div[role="button"]:has-text("Google")',
+  'div:has-text("Continue with Google")',
+  'div:has-text("Sign in with Google")',
   'span:has-text("Google")',
   '[aria-label*="Google"]',
   '[data-provider*="google" i]',
@@ -425,6 +432,116 @@ async function clickFirstActionable(page, selectors) {
   return false;
 }
 
+async function clickCodeBuddyGoogleSocialLogin(page) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 15_000) {
+    for (const scope of getInteractionScopes(page)) {
+      const href = await scope.evaluate(() => {
+        const direct = document.querySelector("a#social-google, #social-google, a[href*='broker/google'], a[href*='google/login']");
+        const directHref = direct?.closest?.("a")?.href || direct?.href;
+        if (directHref) return directHref;
+
+        const candidates = [...document.querySelectorAll("a, button, [role='button'], div, span")];
+        for (const candidate of candidates) {
+          const text = candidate.textContent || candidate.getAttribute("aria-label") || "";
+          const href = candidate.closest?.("a")?.href || candidate.href || "";
+          if (/google/i.test(text) || /broker\/google|google\/login/i.test(href)) {
+            return href || null;
+          }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (href) {
+        await page.goto(href, { waitUntil: "domcontentloaded", timeout: 60_000 });
+        await page.waitForTimeout(1000);
+        return true;
+      }
+
+      const clicked = await clickFirstActionable(scope, GOOGLE_LOGIN_BUTTON_SELECTORS).catch(() => false);
+      if (clicked) {
+        await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => null);
+        await page.waitForTimeout(1000);
+        return true;
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
+async function waitForProviderLoginReady(page, timeoutMs = 30_000) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const scope of getInteractionScopes(page)) {
+      const ready = await scope.evaluate(() => {
+        if (!["interactive", "complete"].includes(document.readyState)) return false;
+
+        const candidates = [
+          ...document.querySelectorAll("a#social-google, #social-google, a[href*='broker/google'], a[href*='google/login']"),
+          ...document.querySelectorAll("input[type='checkbox'][id*='agree' i], input[type='checkbox'][id*='policy' i], input[type='checkbox'][name*='agree' i], input[type='checkbox'][name*='terms' i]"),
+        ];
+
+        return candidates.some((element) => {
+          const box = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return box.width > 0
+            && box.height > 0
+            && style.visibility !== "hidden"
+            && style.display !== "none";
+        });
+      }).catch(() => false);
+      if (ready) return true;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
+async function waitForGoogleAuthPage(page, timeoutMs = 20_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (isGoogleAuthPage(page)) return true;
+    const emailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR).catch(() => null);
+    if (emailInput) return true;
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
+async function waitForCodeBuddyGoogleButton(page, timeoutMs = 15_000) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const scope of getInteractionScopes(page)) {
+      const ready = await scope.evaluate(() => {
+        const element = document.querySelector("a#social-google, #social-google, a[href*='broker/google'], a[href*='google/login']");
+        if (!element) return false;
+        const box = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return box.width > 0
+          && box.height > 0
+          && style.visibility !== "hidden"
+          && style.display !== "none";
+      }).catch(() => false);
+      if (ready) return true;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
 async function checkFirstVisible(page, selectors) {
   for (const scope of getInteractionScopes(page)) {
     for (const selector of selectors) {
@@ -470,6 +587,36 @@ async function checkFirstVisible(page, selectors) {
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.dispatchEvent(new Event("change", { bubbles: true }));
         input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        return input.checked;
+      }, selector).catch(() => false);
+      if (domChecked) return true;
+    }
+  }
+
+  return false;
+}
+
+async function checkFirstUnchecked(page, selectors) {
+  for (const scope of getInteractionScopes(page)) {
+    for (const selector of selectors) {
+      const locator = scope.locator(selector).first();
+      const count = await locator.count().catch(() => 0);
+      if (!count) continue;
+
+      const checked = await locator.isChecked().catch(() => false);
+      if (checked) continue;
+
+      const didCheck = await locator.check({ force: true, timeout: 5_000 }).then(() => true).catch(() => false);
+      if (didCheck) return true;
+
+      const domChecked = await scope.evaluate((candidateSelector) => {
+        const input = document.querySelector(candidateSelector);
+        if (!(input instanceof HTMLInputElement)) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
+        if (setter) setter.call(input, true);
+        else input.checked = true;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
         return input.checked;
       }, selector).catch(() => false);
       if (domChecked) return true;
@@ -1286,17 +1433,28 @@ async function handleProviderLoginGate(page, reportStep) {
     return true;
   }
 
-  const checkedTerms = await checkFirstVisible(page, TERMS_CHECKBOX_SELECTORS);
+  const checkedTerms = await checkFirstUnchecked(page, TERMS_CHECKBOX_SELECTORS);
   if (checkedTerms) {
     reportStep("accepting_provider_terms", "Accepted provider terms for Google login");
     await page.waitForTimeout(400);
-    return true;
+    reportStep("waiting_google_signup_button", "Waiting for Sign up with Google button after accepting terms");
+    await waitForCodeBuddyGoogleButton(page);
   }
 
-  const clickedGoogle = await clickFirstActionable(page, GOOGLE_LOGIN_BUTTON_SELECTORS);
+  reportStep("clicking_google_signup", "Clicking Sign up with Google");
+  const clickedGoogle = await clickCodeBuddyGoogleSocialLogin(page)
+    || await clickFirstActionable(page, GOOGLE_LOGIN_BUTTON_SELECTORS);
+  if (!clickedGoogle) {
+    reportStep("google_login_button_not_found", "Google login button not found after accepting provider terms");
+  }
+
   if (clickedGoogle) {
     reportStep("selecting_google_login", "Selecting Google login");
-    await page.waitForTimeout(1000);
+    const googleOpened = await waitForGoogleAuthPage(page);
+    if (!googleOpened) {
+      reportStep("google_login_not_opened", `Google login did not open yet; current URL: ${page.url()}`);
+      return true;
+    }
 
     const confirmedDialog = await clickFirstActionable(page, PRIVACY_CONFIRM_BUTTON_SELECTORS);
     if (confirmedDialog) {
@@ -1306,6 +1464,8 @@ async function handleProviderLoginGate(page, reportStep) {
 
     return true;
   }
+
+  if (checkedTerms) return true;
 
   return false;
 }
@@ -1423,6 +1583,17 @@ export async function runGoogleAccountAutomation({
   reportStep(openingStep, openingMessage);
   if (!skipNavigation && authUrl) {
     await page.goto(authUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForLoadState("load", { timeout: 30_000 }).catch(() => null);
+    if (isProviderPage(page)) {
+      reportStep("waiting_provider_login_ready", `Waiting for ${serviceLabel} login page to finish loading`);
+      const providerReady = await waitForProviderLoginReady(page);
+      reportStep(
+        providerReady ? "provider_login_ready" : "provider_login_ready_timeout",
+        providerReady
+          ? `${serviceLabel} login page rendered`
+          : `${serviceLabel} login page did not expose expected controls before timeout`
+      );
+    }
     await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
   } else {
     await page.waitForTimeout(1000 + Math.floor(Math.random() * 1000));
@@ -1523,6 +1694,11 @@ export async function runGoogleAccountAutomation({
       continue;
     }
 
+    const handledProviderGate = await handleProviderLoginGate(page, reportStep);
+    if (handledProviderGate) {
+      continue;
+    }
+
     const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
     if (handledProviderOnboarding) {
       continue;
@@ -1568,11 +1744,6 @@ export async function runGoogleAccountAutomation({
         await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
       } catch {}
       await page.waitForTimeout(2000);
-      continue;
-    }
-
-    const handledProviderGate = await handleProviderLoginGate(page, reportStep);
-    if (handledProviderGate) {
       continue;
     }
 

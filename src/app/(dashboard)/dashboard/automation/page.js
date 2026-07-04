@@ -10,6 +10,7 @@ import {
   CloudflareTokenImportModal,
   CodeBuddyCnPhoneAutomationModal,
   KiroOAuthWrapper,
+  Modal,
   OAuthModal,
   AutoclawAutomationModal,
 } from "@/shared/components";

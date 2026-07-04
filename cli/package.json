@@ -1,9 +1,9 @@
 {
-  "name": "wgdv9r",
-  "version": "0.5.10-wyx0.7",
-  "description": "WYx0 CLI - Start and manage the synchronized 9Router server",
+  "name": "gdrouter",
+  "version": "0.5.10-gdr0.1",
+  "description": "GDRouter CLI - Start and manage the synchronized router server",
   "bin": {
-    "wgdv9r": "./cli.js"
+    "gdrouter": "./cli.js"
   },
   "files": [
     "cli.js",

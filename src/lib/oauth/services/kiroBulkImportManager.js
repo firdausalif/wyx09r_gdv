@@ -205,6 +205,7 @@ function sanitizeAccount(account) {
     workerId: account.workerId || null,
     line: account.line,
     currentStep: account.currentStep || null,
+    detailedSteps: account.detailedSteps || null,
     updatedAt: account.updatedAt || null,
     logs: (account.logs || []).slice(-8),
     manualSessionAvailable: Boolean(account.manualSession?.page) && account.status === "needs_manual",

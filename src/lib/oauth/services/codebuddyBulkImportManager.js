@@ -39,8 +39,52 @@ const CODEBUDDY_TRIAL_ERROR_CODES = {
   alreadyApplied: 14051,
 };
 
+const CODEBUDDY_BULK_STEPS = [
+  ["prepare_browser", "Prepare browser"],
+  ["request_oauth_state", "Request CodeBuddy OAuth state"],
+  ["open_codebuddy_oauth", "Open CodeBuddy OAuth page"],
+  ["click_google_signup", "Click Sign up with Google"],
+  ["google_login", "Complete Google login"],
+  ["poll_oauth_token", "Wait for CodeBuddy OAuth token"],
+  ["complete_registration", "Complete CodeBuddy registration"],
+  ["activate_trial", "Activate CodeBuddy IDE trial"],
+  ["create_access_key", "Create CodeBuddy Access Key"],
+  ["save_connection", "Save connection"],
+];
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function ensureCodeBuddyDetailedSteps(account) {
+  if (!account.detailedSteps) {
+    account.detailedSteps = CODEBUDDY_BULK_STEPS.map(([id, label], index) => ({
+      id,
+      label,
+      index: index + 1,
+      status: "pending",
+      startedAt: null,
+      finishedAt: null,
+      message: null,
+    }));
+  }
+  return account.detailedSteps;
+}
+
+function setCodeBuddyDetailedStep(account, id, status, message = null) {
+  const steps = ensureCodeBuddyDetailedSteps(account);
+  const step = steps.find((item) => item.id === id);
+  if (!step) return;
+  const at = new Date().toISOString();
+  step.status = status;
+  step.message = message || step.message;
+  if (status === "running" && !step.startedAt) step.startedAt = at;
+  if (["done", "failed", "skipped"].includes(status)) step.finishedAt = at;
+}
+
+function failRunningCodeBuddyStep(account, message) {
+  const step = (account.detailedSteps || []).find((item) => item.status === "running");
+  if (step) setCodeBuddyDetailedStep(account, step.id, "failed", message);
 }
 
 function normalizeCodeBuddyAuthUrl(rawUrl, state) {
@@ -673,6 +717,7 @@ async function finalizeCodeBuddySuccess({ manager, job, account, context, page, 
       error.status = "trial_not_activated";
       throw error;
     }
+    setCodeBuddyDetailedStep(account, "activate_trial", "done", trialResult.message || "CodeBuddy IDE trial ready");
 
     effectiveTokens = {
       ...effectiveTokens,
@@ -686,6 +731,7 @@ async function finalizeCodeBuddySuccess({ manager, job, account, context, page, 
   }
 
   manager.setAccountStep(account, "creating_codebuddy_api_key", "Generating CodeBuddy Access Key");
+  setCodeBuddyDetailedStep(account, "create_access_key", "running", "Generating CodeBuddy Access Key");
   await manager.persistJobSnapshot(job, { forcePreview: true });
 
   const existingApiKey = effectiveTokens.apiKey
@@ -701,8 +747,10 @@ async function finalizeCodeBuddySuccess({ manager, job, account, context, page, 
       existingApiKey,
       ...createOptions,
     });
+  setCodeBuddyDetailedStep(account, "create_access_key", "done", existingApiKey ? "Using existing CodeBuddy Access Key" : "Created CodeBuddy Access Key");
 
   manager.setAccountStep(account, "saving_connection", "Saving CodeBuddy connection with generated API key");
+  setCodeBuddyDetailedStep(account, "save_connection", "running", "Saving CodeBuddy connection");
   await manager.persistJobSnapshot(job, { forcePreview: true });
   const tokensWithCookie = await attachCodeBuddyWebCookie(context, {
     ...effectiveTokens,
@@ -712,6 +760,7 @@ async function finalizeCodeBuddySuccess({ manager, job, account, context, page, 
     tokens: tokensWithCookie,
     email,
   });
+  setCodeBuddyDetailedStep(account, "save_connection", "done", "Saved CodeBuddy connection");
 
   manager.finalizeAccount(account, "success", {
     connectionId: connection.id,
@@ -883,14 +932,18 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
 
     try {
       this.setAccountStep(account, "preparing_worker", `Worker ${workerId} is preparing a browser context`);
+      setCodeBuddyDetailedStep(account, "prepare_browser", "running", `Worker ${workerId} is preparing a browser context`);
       await this.persistJobSnapshot(job, { forcePreview: true });
+      setCodeBuddyDetailedStep(account, "prepare_browser", "done", "Browser context ready");
 
       this.setAccountStep(account, "requesting_codebuddy_state", "Requesting CodeBuddy OAuth state");
+      setCodeBuddyDetailedStep(account, "request_oauth_state", "running", "Requesting CodeBuddy OAuth state");
       const deviceData = await this.requestDeviceCode(CODEBUDDY_PROVIDER_ID);
       const authUrl = normalizeCodeBuddyAuthUrl(deviceData.verification_uri, deviceData.device_code);
       if (!authUrl || !deviceData.device_code) {
         throw new Error("CodeBuddy did not return an OAuth login URL");
       }
+      setCodeBuddyDetailedStep(account, "request_oauth_state", "done", "CodeBuddy OAuth state received");
 
       const successPromise = createCodeBuddyPollPromise({
         deviceCode: deviceData.device_code,
@@ -899,6 +952,9 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
         pollIntervalMs: this.pollIntervalMs,
         onStep: (step, message) => {
           this.setAccountStep(account, step, message);
+          if (step === "polling_codebuddy_token" && account.codebuddyPollVisible) {
+            setCodeBuddyDetailedStep(account, "poll_oauth_token", "running", message);
+          }
           void this.persistJobSnapshot(job, { forcePreview: false });
         },
       });
@@ -917,17 +973,43 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
         successMessage: "CodeBuddy OAuth token received",
         onStep: (step, message) => {
           this.setAccountStep(account, step, message);
+          if (step === "opening_codebuddy_oauth") {
+            setCodeBuddyDetailedStep(account, "open_codebuddy_oauth", "running", message);
+          } else if (step === "provider_login_ready") {
+            setCodeBuddyDetailedStep(account, "open_codebuddy_oauth", "done", message);
+            setCodeBuddyDetailedStep(account, "click_google_signup", "running", "Ready to click Sign up with Google");
+          } else if (step === "provider_login_ready_timeout") {
+            setCodeBuddyDetailedStep(account, "open_codebuddy_oauth", "failed", message);
+          } else if (step === "waiting_google_signup_button" || step === "clicking_google_signup") {
+            setCodeBuddyDetailedStep(account, "click_google_signup", "running", message);
+          } else if (step === "selecting_google_login") {
+            setCodeBuddyDetailedStep(account, "open_codebuddy_oauth", "done", "CodeBuddy OAuth page loaded");
+            setCodeBuddyDetailedStep(account, "click_google_signup", "done", message);
+            account.codebuddyPollVisible = true;
+            setCodeBuddyDetailedStep(account, "poll_oauth_token", "running", "Waiting for CodeBuddy OAuth token");
+            setCodeBuddyDetailedStep(account, "google_login", "running", "Completing Google login");
+          } else if (step === "google_login_not_opened") {
+            setCodeBuddyDetailedStep(account, "click_google_signup", "failed", message);
+          } else if (step === "entering_email" || step === "entering_password" || step === "submitting_email" || step === "submitting_password") {
+            setCodeBuddyDetailedStep(account, "google_login", "running", message);
+          } else if (step === "codebuddy_token_received") {
+            setCodeBuddyDetailedStep(account, "google_login", "done", "Google login completed");
+            setCodeBuddyDetailedStep(account, "poll_oauth_token", "done", message);
+          }
           void this.persistJobSnapshot(job, { forcePreview: false });
         },
       });
 
       if (automationResult.status === "success") {
         this.setAccountStep(account, "completing_registration", "Completing CodeBuddy registration");
+        setCodeBuddyDetailedStep(account, "complete_registration", "running", "Completing CodeBuddy registration");
         await this.persistJobSnapshot(job, { forcePreview: true });
         await completeCodeBuddyRegistration(page, (step, message) => {
           this.setAccountStep(account, step, message);
           void this.persistJobSnapshot(job, { forcePreview: false });
         });
+        setCodeBuddyDetailedStep(account, "complete_registration", "done", "CodeBuddy registration completed");
+        setCodeBuddyDetailedStep(account, "activate_trial", "running", "Activating CodeBuddy IDE trial");
 
         const { connection } = await finalizeCodeBuddySuccess({
           manager: this,
@@ -978,6 +1060,24 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
         return;
       }
 
+      if (automationResult.status && automationResult.status !== "success") {
+        account.manualSession = {
+          context,
+          page,
+          opened: false,
+          openedAt: null,
+        };
+        this.setAccountStep(account, "awaiting_manual", "Automation failed; waiting for manual browser completion");
+        this.finalizeAccount(account, "needs_manual", {
+          error: automationResult.error || "Automation failed; continue manually in the browser session.",
+          step: "awaiting_manual",
+          message: automationResult.error || "Automation failed; continue manually in the browser session.",
+        });
+        await this.persistJobSnapshot(job, { forcePreview: true });
+        await this.runManualFollowup(job, account, workerId, context, successPromise);
+        return;
+      }
+
       this.finalizeAccount(account, automationResult.status || "failed", {
         error: automationResult.error || "CodeBuddy Google automation failed.",
         step: automationResult.status || "failed",
@@ -987,6 +1087,7 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
       await context.close().catch(() => null);
       await this.persistJobSnapshot(job, { forcePreview: true });
     } catch (error) {
+      failRunningCodeBuddyStep(account, error.message || "Unexpected CodeBuddy bulk import failure.");
       if (job.cancelRequested) {
         this.finalizeAccount(account, "cancelled", {
           error: "Job cancelled",
@@ -994,11 +1095,21 @@ export class CodeBuddyBulkImportManager extends KiroBulkImportManager {
           message: "Job cancelled while CodeBuddy automation was running",
         });
       } else {
-        this.finalizeAccount(account, error.status || "failed", {
-          error: error.message || "Unexpected CodeBuddy bulk import failure.",
-          step: error.step || "failed",
-          message: error.message || "Unexpected CodeBuddy bulk import failure.",
+        account.manualSession = {
+          context,
+          page,
+          opened: false,
+          openedAt: null,
+        };
+        this.setAccountStep(account, "awaiting_manual", "Automation error; waiting for manual browser completion");
+        this.finalizeAccount(account, "needs_manual", {
+          error: error.message || "Unexpected CodeBuddy bulk import failure; continue manually in the browser session.",
+          step: "awaiting_manual",
+          message: error.message || "Unexpected CodeBuddy bulk import failure; continue manually in the browser session.",
         });
+        await this.persistJobSnapshot(job, { forcePreview: true });
+        await this.runManualFollowup(job, account, workerId, context, successPromise);
+        return;
       }
       account.runtimeSession = null;
       await context.close().catch(() => null);

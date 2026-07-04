@@ -270,6 +270,7 @@ export default function ProviderDetailPage() {
       if (connectionsRes.ok) {
         const filtered = (connectionsData.connections || []).filter(c => c.provider === providerId);
         setConnections(filtered);
+        setSelectedConnectionIds((prev) => prev.filter((id) => filtered.some((conn) => conn.id === id)));
       }
       if (proxyPoolsRes.ok) {
         setProxyPools(proxyPoolsData.proxyPools || []);
@@ -729,6 +730,35 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleBulkUpdateConnectionStatus = (isActive) => {
+    if (selectedConnections.length === 0) return;
+    setConfirmState({
+      title: `${isActive ? "Enable" : "Disable"} Selected Connections`,
+      message: `${isActive ? "Enable" : "Disable"} ${selectedConnections.length} selected connection(s)?`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        const ids = selectedConnections.map((conn) => conn.id);
+        let failed = 0;
+        await Promise.all(ids.map(async (id) => {
+          try {
+            const res = await fetch(`/api/providers/${id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ isActive }),
+            });
+            if (!res.ok) failed += 1;
+          } catch (error) {
+            console.log("Error updating connection status:", error);
+            failed += 1;
+          }
+        }));
+        if (failed > 0) alert(`Updated with ${failed} failed request(s).`);
+        setConnections((prev) => prev.map((conn) => ids.includes(conn.id) ? { ...conn, isActive } : conn));
+        clearSelection();
+      },
+    });
+  };
+
   const handleSwapPriority = async (index1, index2) => {
     // Optimistic update state
     const newConnections = [...connections];
@@ -756,6 +786,7 @@ export default function ProviderDetailPage() {
 
   const selectedConnections = connections.filter((conn) => selectedConnectionIds.includes(conn.id));
   const allSelected = connections.length > 0 && selectedConnectionIds.length === connections.length;
+  const bulkEnableSelected = selectedConnections.length > 0 && selectedConnections.every((conn) => conn.isActive === false);
 
   const toggleSelectConnection = (connectionId) => {
     setSelectedConnectionIds((prev) => (
@@ -777,10 +808,6 @@ export default function ProviderDetailPage() {
     setSelectedConnectionIds([]);
     setBulkProxyPoolId("__none__");
   };
-
-  useEffect(() => {
-    setSelectedConnectionIds((prev) => prev.filter((id) => connections.some((conn) => conn.id === id)));
-  }, [connections]);
 
   const selectedProxySummary = (() => {
     if (selectedConnections.length === 0) return "";
@@ -864,6 +891,8 @@ export default function ProviderDetailPage() {
                 isOAuth={isOAuth}
                 isFirst={index === 0}
                 isLast={index === connections.length - 1}
+                isSelected={isSelected(conn.id)}
+                onSelect={() => toggleSelectConnection(conn.id)}
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
@@ -1329,6 +1358,28 @@ export default function ProviderDetailPage() {
                 >
                   Apply Proxy
                 </Button>
+              )}
+              {connections.length > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={allSelected ? "remove_done" : "select_check_box"}
+                    onClick={toggleSelectAllConnections}
+                  >
+                    {allSelected ? "Clear Selection" : "Select All"}
+                  </Button>
+                  {selectedConnections.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant={bulkEnableSelected ? "secondary" : "danger"}
+                      icon={bulkEnableSelected ? "toggle_on" : "toggle_off"}
+                      onClick={() => handleBulkUpdateConnectionStatus(bulkEnableSelected)}
+                    >
+                      {bulkEnableSelected ? "Enable" : "Disable"} Selected ({selectedConnections.length})
+                    </Button>
+                  )}
+                </>
               )}
               {connections.length > 0 && (
                 <>

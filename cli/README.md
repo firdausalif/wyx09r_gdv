@@ -4,8 +4,8 @@
 
 **Connect All AI Code Tools (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) to 40+ AI Providers & 100+ Models.**
 
-[![npm](https://img.shields.io/npm/v/wyxrouter.svg)](https://www.npmjs.com/package/wyxrouter)
-[![Downloads](https://img.shields.io/npm/dm/wyxrouter.svg)](https://www.npmjs.com/package/wyxrouter)
+[![npm](https://img.shields.io/npm/v/wgdv9r.svg)](https://www.npmjs.com/package/wgdv9r)
+[![Downloads](https://img.shields.io/npm/dm/wgdv9r.svg)](https://www.npmjs.com/package/wgdv9r)
 [![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
 [![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
 [![License](https://img.shields.io/npm/l/wyxrouter.svg)](https://github.com/Wisyam/9router_wyx0/blob/master/LICENSE)
@@ -43,8 +43,29 @@
 npm install -g wyxrouter
 wyxrouter
 
-# Or run directly with npx
-npx wyxrouter
+# Or run directly with npx after package is published
+npx wgdv9r
+```
+
+**WYx09r GDV fork — install from source:**
+
+```bash
+git clone https://github.com/firdausalif/wyx09r_gdv.git
+cd wyx09r_gdv
+npm install
+npm run cli:pack
+npm install -g ./wgdv9r-*.tgz
+wgdv9r --skip-update
+```
+
+`--skip-update` keeps this fork installed instead of replacing it with upstream package.
+
+Cloudflare automation formats:
+
+```txt
+google|gmail@example.com|google_password|optional_account_id
+user@example.com|cloudflare_password|optional_account_id
+apiToken|accountId|optionalName
 ```
 
 **Option 2 — Docker (server/VPS):**
@@ -79,11 +100,11 @@ That's it! Start coding with FREE AI models.
 ## 🚀 CLI Options
 
 ```bash
-wyxrouter                    # Start with default settings
-wyxrouter --port 8080        # Custom port
-wyxrouter --no-browser       # Don't open browser
-wyxrouter --skip-update      # Skip auto-update check
-wyxrouter --help             # Show all options
+wgdv9r                    # Start with default settings
+wgdv9r --port 8080        # Custom port
+wgdv9r --no-browser       # Don't open browser
+wgdv9r --skip-update      # Skip auto-update check
+wgdv9r --help             # Show all options
 ```
 
 **Dashboard**: `http://localhost:20128/dashboard`

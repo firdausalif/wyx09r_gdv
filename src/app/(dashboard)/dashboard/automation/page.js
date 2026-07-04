@@ -7,6 +7,7 @@ import {
   BulkAccountAutomationModal,
   Card,
   CardSkeleton,
+  CloudflareTokenImportModal,
   CodeBuddyCnPhoneAutomationModal,
   KiroOAuthWrapper,
   OAuthModal,
@@ -481,6 +482,50 @@ function AutoclawAutomationPanel({ onRefresh }) {
   );
 }
 
+function CloudflareAutomationPanel({ onRefresh }) {
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isTokenOpen, setIsTokenOpen] = useState(false);
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <button type="button" onClick={() => setIsBulkOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="cloud"
+            title="Register/Login + Create Token"
+            subtitle="Register or login Cloudflare via Google, create a Workers AI API token, verify it, test Workers AI, and save the Cloudflare AI provider."
+          />
+        </button>
+        <button type="button" onClick={() => setIsTokenOpen(true)} className="text-left">
+          <Card
+            hover
+            padding="md"
+            icon="vpn_key"
+            title="Import Existing Token"
+            subtitle="Paste apiToken|accountId to verify the token, test Workers AI access, and save the connection. No browser needed."
+          />
+        </button>
+      </div>
+
+      <BulkAccountAutomationModal
+        isOpen={isBulkOpen}
+        provider="cloudflare-ai"
+        title="Cloudflare AI Automation"
+        serviceName="Cloudflare AI"
+        onSuccess={onRefresh}
+        onClose={() => setIsBulkOpen(false)}
+      />
+      <CloudflareTokenImportModal
+        isOpen={isTokenOpen}
+        onSuccess={onRefresh}
+        onClose={() => setIsTokenOpen(false)}
+      />
+    </>
+  );
+}
+
 const AUTOMATION_PROVIDERS = [
   {
     id: "kiro",
@@ -521,6 +566,14 @@ const AUTOMATION_PROVIDERS = [
     description: "Import AutoClaw access tokens or run bulk Google OAuth login. Tracks point balance + auto-refreshes tokens.",
     supportedModes: ["import-token", "bulk-account"],
     component: AutoclawAutomationPanel,
+  },
+  {
+    id: "cloudflare-ai",
+    label: "Cloudflare AI",
+    icon: "cloud",
+    description: "Register/login via Google, create Workers AI API tokens, verify access, and import existing tokens.",
+    supportedModes: ["google-register", "cloudflare-login", "token-import", "workers-ai-test"],
+    component: CloudflareAutomationPanel,
   },
 ];
 

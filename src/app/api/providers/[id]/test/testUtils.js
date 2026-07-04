@@ -422,11 +422,15 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const psd = connection.providerSpecificData || {};
         const accountId = psd.accountId;
         if (!accountId) return { valid: false, error: "Missing Account ID" };
-        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
+        const tokenVerify = await fetchWithConnectionProxy("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+          headers: { "Authorization": `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        if (!tokenVerify.ok) return { valid: false, error: "Invalid Cloudflare API token" };
+        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/meta/llama-3.1-8b-instruct`;
         const res = await fetchWithConnectionProxy(url, {
           method: "POST",
           headers: { "Authorization": `Bearer ${connection.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: getDefaultModel("cloudflare-ai"), messages: [{ role: "user", content: "test" }], max_tokens: 1 }),
+          body: JSON.stringify({ messages: [{ role: "user", content: "test" }], max_tokens: 1 }),
         }, effectiveProxy);
         const valid = res.status !== 401 && res.status !== 403 && res.status !== 404;
         return { valid, error: valid ? null : "Invalid API token or Account ID" };

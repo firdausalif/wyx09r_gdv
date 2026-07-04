@@ -13,7 +13,7 @@ export function resolveRuntimeModuleDir(metaUrl = import.meta.url) {
 const currentDir = resolveRuntimeModuleDir();
 const importRuntimeModule = Function("specifier", "return import(specifier)");
 
-const SUPPORTED_ENGINES = new Set(["chromium", "camoufox"]);
+const SUPPORTED_ENGINES = new Set(["chromium", "camoufox", "patchright", "patchright-chrome", "cloakbrowser"]);
 export const DEFAULT_BULK_IMPORT_ENGINE = "chromium";
 
 export function normalizeBulkImportEngine(value) {
@@ -103,6 +103,25 @@ function loadRuntimePlaywright(runtime) {
 function loadRuntimeCamoufox(runtime) {
   try {
     return runtime?.loadCamoufoxModule?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+function loadRuntimePatchright(runtime) {
+  try {
+    return runtime?.loadPatchrightModule?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadRuntimeCloakBrowser(runtime) {
+  try {
+    if (runtime?.loadCloakBrowserModuleAsync) {
+      return await runtime.loadCloakBrowserModuleAsync() || null;
+    }
+    return runtime?.loadCloakBrowserModule?.() || null;
   } catch {
     return null;
   }
@@ -231,10 +250,54 @@ async function launchCamoufox({ proxyUrl, headless = true, args = [] } = {}) {
   return firefox.launch(launchOptions);
 }
 
+async function launchPatchright({ proxyUrl, headless = true, args = [], channel } = {}) {
+  const runtime = await loadRuntimeHelper("patchrightRuntime");
+  if (runtime?.ensurePatchrightRuntime) {
+    const ensured = runtime.ensurePatchrightRuntime({ silent: false });
+    if (!ensured?.ok) throw ensured?.error || new Error("Patchright automation runtime is not available.");
+  }
+  let patchright = loadRuntimePatchright(runtime);
+  if (!patchright && runtime?.installPatchrightOnly) {
+    const installed = runtime.installPatchrightOnly({ silent: false });
+    if (!installed.ok) throw Object.assign(new Error(`Patchright auto-install failed: ${installed.reason}`), { code: "PATCHRIGHT_INSTALL_FAILED" });
+    patchright = loadRuntimePatchright(runtime);
+  }
+  const browserType = channel === "chrome" && patchright?.chromium ? patchright.chromium : patchright?.chromium;
+  if (!browserType?.launch) throw Object.assign(new Error("patchright loaded but chromium.launch is unavailable"), { code: "PATCHRIGHT_API_MISMATCH" });
+  const options = { headless };
+  if (args.length) options.args = args;
+  if (channel) options.channel = channel;
+  const proxy = buildBrowserProxyOption(proxyUrl);
+  if (proxy) options.proxy = proxy;
+  return browserType.launch(options);
+}
+
+async function launchCloakBrowser({ proxyUrl, headless = true, args = [] } = {}) {
+  const runtime = await loadRuntimeHelper("cloakBrowserRuntime");
+  if (runtime?.ensureCloakBrowserRuntime) {
+    const ensured = runtime.ensureCloakBrowserRuntime({ silent: false });
+    if (!ensured?.ok) throw ensured?.error || new Error("CloakBrowser automation runtime is not available.");
+  }
+  const cloakbrowser = await loadRuntimeCloakBrowser(runtime);
+  const launcher = cloakbrowser?.launch || cloakbrowser?.default?.launch || cloakbrowser?.chromium?.launch;
+  if (!launcher) throw Object.assign(new Error("cloakbrowser loaded but no launch() API is available"), { code: "CLOAKBROWSER_API_MISMATCH" });
+  const options = { headless };
+  if (args.length) options.args = args;
+  const proxy = buildBrowserProxyOption(proxyUrl);
+  if (proxy) options.proxy = proxy;
+  return launcher(options);
+}
+
 export async function launchBulkImportBrowser({ engine = DEFAULT_BULK_IMPORT_ENGINE, proxyUrl, headless = true, args = [] } = {}) {
   const normalized = normalizeBulkImportEngine(engine);
   if (normalized === "camoufox") {
     return launchCamoufox({ proxyUrl, headless, args });
+  }
+  if (normalized === "patchright" || normalized === "patchright-chrome") {
+    return launchPatchright({ proxyUrl, headless, args, channel: normalized === "patchright-chrome" ? "chrome" : undefined });
+  }
+  if (normalized === "cloakbrowser") {
+    return launchCloakBrowser({ proxyUrl, headless, args });
   }
   return launchChromium({ proxyUrl, headless, args });
 }

@@ -26,7 +26,7 @@ export async function POST(request, { params }) {
 
     const jobArgs = spec.normalizeStartArgs(body, resolvedProxy);
 
-    if (spec.parseAccounts) {
+    if (spec.parseAccounts && provider !== "cloudflare-ai") {
       const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
       const { parsed, invalidLines } = await spec.parseAccounts(accounts);
 

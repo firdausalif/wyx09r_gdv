@@ -187,12 +187,17 @@ export async function POST(request) {
         if (!accountId) {
           return NextResponse.json({ valid: false, error: "Missing Account ID" });
         }
-        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
+        const tokenVerify = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+          headers: { "Authorization": `Bearer ${apiKey}` },
+        });
+        if (!tokenVerify.ok) {
+          return NextResponse.json({ valid: false, error: "Invalid Cloudflare API token" });
+        }
+        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/meta/llama-3.1-8b-instruct`;
         const cfRes = await fetch(url, {
           method: "POST",
           headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: getDefaultModel("cloudflare-ai"),
             messages: [{ role: "user", content: "test" }],
             max_tokens: 1,
           }),

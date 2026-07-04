@@ -79,6 +79,19 @@ npm install -g 9router
 9router
 ```
 
+**WYx09r GDV fork install:**
+
+```bash
+git clone https://github.com/firdausalif/wyx09r_gdv.git
+cd wyx09r_gdv
+npm install
+npm run cli:pack
+npm install -g ./wgdv9r-*.tgz
+wgdv9r --skip-update
+```
+
+Use `--skip-update` for this fork so global CLI does not replace itself with upstream package during startup.
+
 🎉 Dashboard opens at `http://localhost:20128`
 
 **2. Connect a FREE provider (no signup needed):**
@@ -112,6 +125,20 @@ Production mode:
 npm run build
 PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
 ```
+
+Pack and reinstall local CLI after source changes:
+
+```bash
+npm run cli:pack
+npm install -g ./wgdv9r-*.tgz
+wgdv9r --skip-update
+```
+
+WYx09r GDV automation additions:
+
+- Cloudflare AI bulk import: `google|gmail@example.com|google_password|optional_account_id`
+- Cloudflare direct token import: `apiToken|accountId|optionalName`
+- Browser engines: `chromium`, `camoufox`, `patchright`, `patchright-chrome`, `cloakbrowser`
 
 Default URLs:
 - Dashboard: `http://localhost:20128/dashboard`

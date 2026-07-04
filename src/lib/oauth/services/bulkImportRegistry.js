@@ -119,6 +119,25 @@ export const BULK_IMPORT_PROVIDERS = Object.freeze({
       proxySource: resolvedProxy.proxySource,
     }),
   },
+  "cloudflare-ai": {
+    label: "Cloudflare AI",
+    errorLabel: "Cloudflare AI import job",
+    staleOnLatest404: true,
+    parseAccounts: (accounts) =>
+      import("@/lib/oauth/services/cloudflareBulkImportManager").then((m) => m.parseCloudflareBulkAccounts(accounts)),
+    getManager: () =>
+      import("@/lib/oauth/services/cloudflareBulkImportManager").then((m) => m.getCloudflareBulkImportManager()),
+    normalizeStartArgs: (body, resolvedProxy) => ({
+      accounts: body?.accounts ?? [],
+      concurrency: body?.concurrency,
+      engine: body?.engine,
+      proxyUrl: resolvedProxy.proxyUrl,
+      proxyUrls: resolvedProxy.proxyUrls,
+      proxyMode: resolvedProxy.proxyMode,
+      proxyPoolId: resolvedProxy.proxyPoolId,
+      proxySource: resolvedProxy.proxySource,
+    }),
+  },
 });
 
 export function isValidBulkImportProvider(providerId) {

@@ -1,9 +1,9 @@
 {
-  "name": "wyxrouter",
+  "name": "wgdv9r",
   "version": "0.5.10-wyx0.7",
   "description": "WYx0 CLI - Start and manage the synchronized 9Router server",
   "bin": {
-    "wyxrouter": "./cli.js"
+    "wgdv9r": "./cli.js"
   },
   "files": [
     "cli.js",

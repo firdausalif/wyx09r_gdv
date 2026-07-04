@@ -186,15 +186,15 @@ if (fs.existsSync(customServerSrc)) {
 console.log("3️⃣ b Configuring SQLite drivers...");
 function ensureModuleInBundle(pkg) {
   const dest = path.join(cliAppDir, "node_modules", pkg);
-  if (fs.existsSync(dest)) {
-    console.log(`✅ ${pkg} already bundled`);
-    return;
-  }
   const candidates = [
     path.join(appDir, "node_modules", pkg),
     path.join(rootDir, "node_modules", pkg),
   ];
   const src = candidates.find((p) => fs.existsSync(p));
+  if (fs.existsSync(dest) && !(pkg === "sql.js" && !fs.existsSync(path.join(dest, "dist", "sql-wasm.wasm")))) {
+    console.log(`✅ ${pkg} already bundled`);
+    return;
+  }
   if (!src) {
     console.warn(`⚠️  ${pkg} not found locally — bundle will rely on node:sqlite or runtime install`);
     return;

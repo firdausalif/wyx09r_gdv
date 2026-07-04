@@ -43,6 +43,7 @@ export { default as CodeBuddyQuotaCookieModal } from "./CodeBuddyQuotaCookieModa
 export { default as MergeConnectionsModal } from "./MergeConnectionsModal";
 export { default as Pagination } from "./Pagination";
 export { default as AutoclawAutomationModal } from "./AutoclawAutomationModal";
+export { default as CloudflareTokenImportModal } from "./CloudflareTokenImportModal";
 
 // Layouts
 export * from "./layouts";

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import PropTypes from "prop-types";
 import Badge from "./Badge";
 import Button from "./Button";
@@ -16,10 +15,14 @@ import { readJsonResponse } from "@/shared/utils/httpResponse.js";
 const DEFAULT_CONCURRENCY = 4;
 const ACTIVE_JOB_STATUSES = new Set(["queued", "running", "needs_manual"]);
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
-const DEFAULT_ENGINE = "chromium";
+const DEFAULT_ENGINE = "cloakbrowser";
 const ENGINE_OPTIONS = [
-  { value: "chromium", label: "Chromium (default, fast)" },
+  { value: "cloakbrowser", label: "CloakBrowser (anti-detect, default)" },
+  { value: "chromium", label: "Chromium (fast)" },
   { value: "camoufox", label: "Camoufox (stealth Firefox, slower)" },
+  { value: "patchright", label: "Patchright (Chromium stealth)" },
+  { value: "patchright-chrome", label: "Patchright Chrome (system Chrome)" },
+  { value: "cloakbrowser", label: "CloakBrowser (anti-detect)" },
 ];
 
 function describeWorkerLimit(limitedBy) {
@@ -227,7 +230,29 @@ export default function BulkAccountAutomationModal({
       try {
         const { res, data } = await fetchJob(provider, activeJob.jobId);
         if (res.ok && data?.job) {
-          setActiveJob(data.job);
+          setActiveJob((prev) => {
+            const next = data.job;
+            if (prev && next?.jobId === prev.jobId) {
+              const prevPreview = prev.preview?.imageData;
+              const nextPreview = next.preview?.imageData;
+              const prevActivityLen = prev.activity?.length || 0;
+              const nextActivityLen = next.activity?.length || 0;
+              const prevSummary = JSON.stringify(prev.summary || {});
+              const nextSummary = JSON.stringify(next.summary || {});
+              const prevAccountsSig = (prev.accounts || []).map((a) => `${a.line}:${a.status}`).join(",");
+              const nextAccountsSig = (next.accounts || []).map((a) => `${a.line}:${a.status}`).join(",");
+              if (
+                prevPreview === nextPreview &&
+                prevActivityLen === nextActivityLen &&
+                prevSummary === nextSummary &&
+                prevAccountsSig === nextAccountsSig &&
+                prev.status === next.status
+              ) {
+                return prev;
+              }
+            }
+            return next;
+          });
           if (typeof window !== "undefined") {
             window.localStorage.setItem(storageKey, data.job.jobId);
           }
@@ -245,13 +270,14 @@ export default function BulkAccountAutomationModal({
   }, [activeJob?.jobId, finishedJob, isOpen, onSuccess, provider, storageKey]);
 
   const handleStartBulk = async () => {
+    const isCloudflare = provider === "cloudflare-ai";
     const lines = bulkText
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
 
     if (!lines.length) {
-      setError("Please enter at least one email:password or email|password line");
+      setError(isCloudflare ? "Please enter at least one email:password line" : "Please enter at least one email:password or email|password line");
       return;
     }
 
@@ -344,9 +370,15 @@ export default function BulkAccountAutomationModal({
         {!activeJob && (
           <>
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
-              <p className="text-sm text-blue-800 dark:text-blue-200">
-                Bulk GSuite login runs browser workers in the background. Use one account per line: <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email:password</code> or <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email|password</code>. Lines starting with <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">#</code> are skipped. Accounts that hit CAPTCHA, 2FA, or recovery prompts move to manual assist.
-              </p>
+              {provider === "cloudflare-ai" ? (
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  Bulk Cloudflare import uses Google signup/login by default, then creates a Workers AI token and saves it. Use one account per line: <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email:password</code> or <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email|password</code>. Existing tokens still support <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">apiToken|accountId|optionalName</code>. Complete captcha/2FA in the opened browser if needed.
+                </p>
+              ) : (
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  Bulk GSuite login runs browser workers in the background. Use one account per line: <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email:password</code> or <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">email|password</code>. Lines starting with <code className="rounded bg-blue-100 px-1 dark:bg-blue-800">#</code> are skipped. Accounts that hit CAPTCHA, 2FA, or recovery prompts move to manual assist.
+                </p>
+              )}
             </div>
 
             <div>
@@ -356,11 +388,11 @@ export default function BulkAccountAutomationModal({
               <textarea
                 value={bulkText}
                 onChange={(event) => setBulkText(event.target.value)}
-                placeholder={"gmail1@example.com:password1\ngmail2@example.com|password2\n# comment lines are skipped"}
+                placeholder={provider === "cloudflare-ai" ? "gmail1@example.com:password1\ngmail2@example.com|password2\ncf_api_token_1|account_id_1|main\n# comment lines are skipped" : "gmail1@example.com:password1\ngmail2@example.com|password2\n# comment lines are skipped"}
                 className="min-h-[180px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-primary"
               />
               <p className="mt-1 text-xs text-text-muted">
-                One account per line. Supported formats: email:password, email|password, or tab-separated.
+                {provider === "cloudflare-ai" ? "One account per line. Supported: email:password, email|password, apiToken|accountId|name, or JSON." : "One account per line. Supported formats: email:password, email|password, or tab-separated."}
               </p>
             </div>
 
@@ -528,13 +560,12 @@ export default function BulkAccountAutomationModal({
                   </div>
                   <div className="relative bg-black/90">
                     {activeJob.preview?.imageData ? (
-                      <Image
+                      <img
                         src={activeJob.preview.imageData}
                         alt={`Live worker preview for ${activeJob.preview.email || serviceName}`}
-                        width={1440}
-                        height={900}
-                        unoptimized
-                        className="h-[340px] w-full object-contain"
+                        className="h-[340px] w-full object-contain transition-opacity duration-150"
+                        loading="eager"
+                        decoding="async"
                       />
                     ) : (
                       <div className="flex h-[340px] flex-col items-center justify-center gap-3 px-6 text-center text-slate-200">

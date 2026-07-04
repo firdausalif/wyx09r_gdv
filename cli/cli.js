@@ -79,7 +79,8 @@ function getDisplayHost() {
 const MAX_PORT_ATTEMPTS = 10;
 // Identifiers for killAllAppProcesses - only kill 9router specifically
 const PROCESS_IDENTIFIERS = [
-  '9router'  // Only package name - avoid killing other apps
+  '9router',
+  'wgdv9r'
 ];
 
 // Parse arguments

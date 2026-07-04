@@ -7,6 +7,8 @@ const { runNpmInstall, summarizeNpmError } = require("./sqliteRuntime");
 
 const PLAYWRIGHT_VERSION = "^1.54.2";
 const CAMOUFOX_VERSION = "^0.11.0";
+const PATCHRIGHT_VERSION = "^1.54.0";
+const CLOAKBROWSER_VERSION = "^0.4.7";
 
 function getDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
@@ -88,6 +90,8 @@ configureAutomationBrowserEnv();
 module.exports = {
   PLAYWRIGHT_VERSION,
   CAMOUFOX_VERSION,
+  PATCHRIGHT_VERSION,
+  CLOAKBROWSER_VERSION,
   configureAutomationBrowserEnv,
   ensureAutomationRuntimeDir,
   getAutomationBrowsersDir,

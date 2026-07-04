@@ -131,6 +131,7 @@ export const BULK_IMPORT_PROVIDERS = Object.freeze({
       accounts: body?.accounts ?? [],
       concurrency: body?.concurrency,
       engine: body?.engine,
+      headless: body?.headless,
       proxyUrl: resolvedProxy.proxyUrl,
       proxyUrls: resolvedProxy.proxyUrls,
       proxyMode: resolvedProxy.proxyMode,

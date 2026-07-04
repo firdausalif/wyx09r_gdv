@@ -4,6 +4,7 @@ import {
   createFreshContext,
   buildLookupResponse,
   parseKiroBulkAccounts,
+  stopCdpScreencast,
 } from "./kiroBulkImportManager.js";
 import { runGoogleAccountAutomation } from "./googleAutomation.js";
 
@@ -130,7 +131,7 @@ async function saveCloudflareConnection({ token, accountId, name, workerAi }) {
 
 async function defaultBrowserLauncher(job) {
   const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
-  return launchBulkImportBrowser({ engine: job?.engine || "patchright", proxyUrl: job?.proxyUrl || undefined, headless: false });
+  return launchBulkImportBrowser({ engine: job?.engine || "cloakbrowser", proxyUrl: job?.proxyUrl || undefined, headless: job?.headless ?? false });
 }
 
 async function fillFirst(page, selectors, value) {
@@ -192,11 +193,74 @@ async function waitForDashboardSession(page, timeoutMs = 5 * 60_000) {
 async function loginCloudflare(page, email, password, onStep) {
   onStep?.("opening_cloudflare_login", "Opening Cloudflare login");
   await page.goto("https://dash.cloudflare.com/login", { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await fillFirst(page, ["input[type=email]", "input[name=email]", "input#email"], email);
-  await clickFirst(page, ["button[type=submit]", "button:has-text('Next')", "button:has-text('Log in')"]);
+  await page.waitForTimeout(2_000);
+
+  const googleSelectors = [
+    'button:has-text("Continue with Google")',
+    'a:has-text("Continue with Google")',
+    'button:has-text("Sign in with Google")',
+    'a:has-text("Sign in with Google")',
+    '#social-google',
+    'a#social-google',
+    'button[class*="Google"]',
+    'a[class*="Google"]',
+    '[data-provider*="google" i]',
+    'button:has-text("Google")',
+    'a:has-text("Google")',
+  ];
+
+  let clickedGoogle = false;
+  for (let attempt = 0; attempt < 5 && !clickedGoogle; attempt += 1) {
+    for (const selector of googleSelectors) {
+      try {
+        const locator = page.locator(selector).first();
+        if (await locator.count() && await locator.isVisible()) {
+          await locator.click({ timeout: 5_000 });
+          clickedGoogle = true;
+          onStep?.("clicked_google_login", "Clicked 'Continue with Google' on Cloudflare");
+          break;
+        }
+      } catch {}
+    }
+    if (!clickedGoogle) await page.waitForTimeout(1_500);
+  }
+
+  if (!clickedGoogle) {
+    onStep?.("google_button_not_found", "Google button not found, trying direct OAuth URL");
+    try {
+      await page.goto("https://dash.cloudflare.com/login/google", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    } catch {
+      await page.goto("https://dash.cloudflare.com/login", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    }
+    await page.waitForTimeout(2_000);
+  }
+
+  await page.waitForTimeout(2_000);
+
+  const isGooglePage = await page.evaluate(() => {
+    const url = window.location.href;
+    return url.includes("accounts.google.com") || url.includes("google.com/o/oauth2");
+  });
+
+  if (!isGooglePage) {
+    onStep?.("waiting_google_redirect", "Waiting for Google login page to load");
+    try {
+      await page.waitForURL(/accounts\.google\.com|google\.com\/o\/oauth2/, { timeout: 15_000 });
+    } catch {
+      throw new Error("Did not redirect to Google login page after clicking 'Continue with Google'");
+    }
+  }
+
+  onStep?.("entering_google_email", "Entering email on Google login page");
   await page.waitForTimeout(1_000);
+  await fillFirst(page, ["input[type=email]", "input[name=email]", "input#email", "input[type=email]"], email);
+  await clickFirst(page, ["button[type=submit]", "button:has-text('Next')", "button:has-text('Log in')", "#next"]);
+  await page.waitForTimeout(2_000);
+
+  onStep?.("entering_google_password", "Entering password on Google login page");
   await fillFirst(page, ["input[type=password]", "input[name=password]", "input#password"], password);
-  await clickFirst(page, ["button[type=submit]", "button:has-text('Log in')", "button:has-text('Sign in')"]);
+  await clickFirst(page, ["button[type=submit]", "button:has-text('Log in')", "button:has-text('Sign in')", "#next"]);
+
   onStep?.("waiting_cloudflare_session", "Waiting for Cloudflare dashboard session; complete captcha/2FA in opened browser if needed");
   const ok = await waitForDashboardSession(page);
   if (!ok) throw new Error("Cloudflare dashboard session not ready after login timeout");
@@ -478,7 +542,7 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
     });
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, jobFields }) {
+  async startJob({ accounts, concurrency, engine, headless, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, jobFields }) {
     const { parsed, invalidLines } = parseCloudflareBulkAccounts(accounts);
     if (!parsed.length || invalidLines.length) {
       const error = "Invalid Cloudflare format. Use email:password, email|password|optionalAccountId, apiToken|accountId|optionalName, or JSON.";
@@ -488,6 +552,7 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
       accounts: parsed.map((a) => `${a.email}|${a.password}`),
       concurrency: concurrency || KIRO_BULK_IMPORT_DEFAULT_CONCURRENCY,
       engine,
+      headless,
       proxyUrl,
       proxyUrls,
       proxyMode,
@@ -527,11 +592,12 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
 
   async processAccount(job, account, workerId, meta) {
     let context = null;
+    let browser = null;
     try {
       if (meta.mode === "browser" || meta.mode === "google") {
         this.setAccountStep(account, "creating_cloudflare_token", `Worker ${workerId} creating Cloudflare token from dashboard`);
         await this.persistJobSnapshot(job, { forcePreview: false });
-        const browser = await this.browserLauncher(job);
+        browser = await this.browserLauncher(job);
         job.workerBrowsers.add(browser);
         const fresh = await createFreshContext(browser);
         context = fresh.context;
@@ -579,7 +645,17 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
     } finally {
       account.password = undefined;
       account.runtimeSession = null;
-      if (context) await context.close().catch(() => null);
+      if (context) {
+        try {
+          const pages = context.pages();
+          for (const p of pages) await stopCdpScreencast?.(p).catch(() => null);
+        } catch {}
+        await context.close().catch(() => null);
+      }
+      if (browser) {
+        job.workerBrowsers?.delete?.(browser);
+        await browser.close().catch(() => null);
+      }
       await this.persistJobSnapshot(job, { forcePreview: false });
     }
   }

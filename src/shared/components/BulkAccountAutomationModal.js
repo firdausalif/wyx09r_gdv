@@ -93,6 +93,7 @@ export default function BulkAccountAutomationModal({
   const [systemSpecInfo, setSystemSpecInfo] = useState(null);
   const [systemSpecLoading, setSystemSpecLoading] = useState(false);
   const [engine, setEngine] = useState(DEFAULT_ENGINE);
+  const [headless, setHeadless] = useState(false);
   const [proxyPoolId, setProxyPoolId] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
   const [proxyPools, setProxyPools] = useState([]);
@@ -292,6 +293,7 @@ export default function BulkAccountAutomationModal({
           ? "auto"
           : Number.parseInt(concurrency, 10) || DEFAULT_CONCURRENCY,
         engine,
+        headless,
       };
       if (proxyPoolId) {
         postBody.proxyPoolId = proxyPoolId;
@@ -451,9 +453,25 @@ export default function BulkAccountAutomationModal({
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-text-muted">
-                  Camoufox is a stealth Firefox; first run downloads ~150MB.
+                  CloakBrowser is anti-detect; Camoufox is stealth Firefox (~150MB download).
                 </p>
               </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium">Browser Mode</label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-text-main">
+                <input
+                  type="checkbox"
+                  checked={headless}
+                  onChange={(event) => setHeadless(event.target.checked)}
+                  className="h-4 w-4 rounded border-border"
+                />
+                Run headless (no visible browser window)
+              </label>
+              <p className="mt-1 text-xs text-text-muted">
+                Headless is faster but you cannot manually solve CAPTCHA/2FA. Turn off if login needs manual interaction.
+              </p>
             </div>
 
             <div>

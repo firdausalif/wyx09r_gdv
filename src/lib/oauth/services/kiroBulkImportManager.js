@@ -21,8 +21,8 @@ const TERMINAL_ACCOUNT_STATUSES = new Set([
 
 const MAX_ACCOUNT_LOG_ENTRIES = 40;
 const MAX_JOB_ACTIVITY_ENTRIES = 80;
-const PREVIEW_CAPTURE_INTERVAL_MS = 1500;
-const PREVIEW_CAPTURE_TIMEOUT_MS = 2500;
+const PREVIEW_CAPTURE_INTERVAL_MS = 800;
+const PREVIEW_CAPTURE_TIMEOUT_MS = 2000;
 const RECENT_TERMINAL_JOB_WINDOW_MS = 30 * 60_000;
 const KIRO_BULK_IMPORT_DIR = path.join(DATA_DIR, "kiro-bulk-import");
 const KIRO_BULK_IMPORT_META_FILE = path.join(KIRO_BULK_IMPORT_DIR, "meta.json");
@@ -428,6 +428,65 @@ async function revealBrowserWindow(page, { account } = {}) {
   }
 }
 
+const cdpSessions = new WeakMap();
+const cdpFrames = new WeakMap();
+
+async function ensureCdpScreencast(page) {
+  if (!page || typeof page.context !== "function") return null;
+  if (cdpFrames.has(page)) return cdpFrames.get(page);
+
+  try {
+    const context = page.context();
+    if (typeof context.newCDPSession !== "function") return null;
+    const session = await context.newCDPSession(page);
+    const state = { frames: [], active: true, session };
+    cdpSessions.set(page, session);
+    cdpFrames.set(page, state);
+
+    session.on("Page.screencastFrame", (event) => {
+      if (event?.data) {
+        state.frames.push(event.data);
+        if (state.frames.length > 2) state.frames.shift();
+      }
+      if (event?.sessionId) {
+        session.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
+      }
+    });
+
+    await session.send("Page.startScreencast", {
+      format: "jpeg",
+      quality: 50,
+      maxWidth: 1280,
+      maxHeight: 720,
+      everyNthFrame: 2,
+    }).catch(() => null);
+
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+async function captureCdpFrame(page) {
+  const state = await ensureCdpScreencast(page);
+  if (!state || !state.frames.length) return null;
+  const frame = state.frames[state.frames.length - 1];
+  return `data:image/jpeg;base64,${frame}`;
+}
+
+async function stopCdpScreencast(page) {
+  const state = cdpFrames.get(page);
+  const session = cdpSessions.get(page);
+  if (state) state.active = false;
+  try {
+    if (session) await session.send("Page.stopScreencast").catch(() => null);
+  } catch {}
+  cdpFrames.delete(page);
+  cdpSessions.delete(page);
+}
+
+export { stopCdpScreencast };
+
 export class KiroBulkImportManager {
   constructor({
     browserLauncher = defaultBrowserLauncher,
@@ -446,7 +505,7 @@ export class KiroBulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, jobFields }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, headless, jobFields }) {
     const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
     if (!parsed.length) {
       const error = invalidLines.length > 0
@@ -472,6 +531,7 @@ export class KiroBulkImportManager {
       status: "running",
       concurrency: clampConcurrency(concurrency),
       engine: resolvedEngine,
+      headless: headless ?? false,
       proxyUrl: resolvedProxyUrls[0] || null,
       proxyUrls: resolvedProxyUrls,
       proxyMode: proxyMode || (resolvedProxyUrls.length > 1 ? "round-robin" : (resolvedProxyUrls.length === 1 ? "single" : "none")),
@@ -723,19 +783,20 @@ export class KiroBulkImportManager {
       updatedAt: previewAccount.updatedAt || nowIso(),
     };
 
-    // Hard cap the screenshot. page.screenshot has NO default timeout on
-    // Playwright unless setDefaultTimeout was called; a concurrent page.evaluate
-    // (Qoder fetches /api/v1/me/userplan while status is still 'running') can
-    // stall the screenshot indefinitely. Without this race, BOTH
-    // persistJobSnapshot AND getJobWithPreview (frontend's 2s polling path)
-    // freeze and the Live Browser Preview modal sticks on a stale image.
+    // Try CDP screencast first (smooth ~30fps), fallback to screenshot
+    const cdpFrame = await captureCdpFrame(page);
+    if (cdpFrame) {
+      return { ...meta, imageData: cdpFrame };
+    }
+
+    // Fallback: screenshot
     const previousImage = job.lastPreview?.imageData || null;
     let screenshot;
     try {
       screenshot = await Promise.race([
         page.screenshot({
           type: "jpeg",
-          quality: 55,
+          quality: 50,
           fullPage: false,
           animations: "disabled",
           caret: "hide",

@@ -8,6 +8,31 @@ import { createAutoclawTokenMonitor, runAutoclawGoogleAutomation } from "./autoc
 import { createProviderConnection } from "../../../models/index.js";
 
 const AUTOCLAW_PROVIDER_ID = "autoclaw";
+const MAX_SIGNIN_RETRY_ATTEMPTS = 3;
+
+/**
+ * Rotate the session ID in a cliproxy-style URL to get a fresh IP.
+ * Format: http://user-region-HK-sid-XXXXXXXX-t-5:pass@host:port
+ * We replace the sid value with a new random one so the proxy pool assigns
+ * a different IP for the next attempt.
+ *
+ * If the URL doesn't match the expected pattern, return it unchanged.
+ */
+function rotateProxySessionId(proxyUrl) {
+  if (!proxyUrl) return proxyUrl;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!parsed.username) return proxyUrl;
+    // Match sid-XXXX pattern in username and replace with new random sid
+    const newSid = Math.random().toString(36).slice(2, 10);
+    const newUsername = parsed.username.replace(/sid-[a-zA-Z0-9_-]+/i, `sid-${newSid}`);
+    if (newUsername === parsed.username) return proxyUrl; // no sid pattern found
+    parsed.username = newUsername;
+    return parsed.toString();
+  } catch {
+    return proxyUrl;
+  }
+}
 
 async function defaultSocialExchange({ access_token, refresh_token, user_id, user_name, device_id }) {
   const device = device_id || crypto.randomUUID();
@@ -42,9 +67,86 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
   }
 
   async processAccount(job, account, workerId, browser = job.browser) {
+    let currentBrowser = browser;
+    let currentProxyUrl = browser?.__ninerouterProxyUrl || job.proxyUrl || null;
+    let ownsBrowser = false;
+
+    for (let attempt = 1; attempt <= MAX_SIGNIN_RETRY_ATTEMPTS; attempt++) {
+      if (job.cancelRequested) {
+        this.finalizeAccount(account, "cancelled", { error: "Job cancelled" });
+        return;
+      }
+
+      // For retry attempts (attempt > 1), close the old browser and launch a
+      // new one with a rotated proxy session ID to get a fresh IP.
+      if (attempt > 1) {
+        if (ownsBrowser && currentBrowser) {
+          await currentBrowser.close().catch(() => null);
+          currentBrowser = null;
+        }
+        const rotatedProxyUrl = rotateProxySessionId(currentProxyUrl);
+        if (rotatedProxyUrl !== currentProxyUrl) {
+          this.setAccountStep(account, "retrying_with_fresh_ip", `Retrying with fresh proxy IP (attempt ${attempt}/${MAX_SIGNIN_RETRY_ATTEMPTS})`);
+        } else {
+          this.setAccountStep(account, "retrying_signin", `Retrying sign-in (attempt ${attempt}/${MAX_SIGNIN_RETRY_ATTEMPTS})`);
+        }
+        await this.persistJobSnapshot(job, { forcePreview: false });
+        currentProxyUrl = rotatedProxyUrl;
+
+        try {
+          currentBrowser = await this.browserLauncher({ ...job, proxyUrl: currentProxyUrl });
+          currentBrowser.__ninerouterProxyUrl = currentProxyUrl;
+          job.workerBrowsers.add(currentBrowser);
+          ownsBrowser = true;
+        } catch (e) {
+          this.finalizeAccount(account, "failed", {
+            error: `Failed to launch browser for retry: ${e.message}`,
+            step: "failed",
+            message: `Failed to launch browser for retry: ${e.message}`,
+          });
+          await this.persistJobSnapshot(job, { forcePreview: false });
+          return;
+        }
+      }
+
+      const result = await this.processAccountOnce(job, account, workerId, currentBrowser, currentProxyUrl, attempt);
+
+      // If the automation returned needs_retry, loop again with fresh IP.
+      // Otherwise, the account is finalized (success/failed/needs_manual) and
+      // we're done.
+      if (result !== "needs_retry") {
+        account.password = undefined;
+        // Clean up owned browser on terminal states
+        if (ownsBrowser && currentBrowser) {
+          await currentBrowser.close().catch(() => null);
+          if (job.workerBrowsers) job.workerBrowsers.delete(currentBrowser);
+        }
+        return;
+      }
+
+      // needs_retry — close context and loop to retry with fresh IP
+      this.setAccountStep(account, "signin_failed_retry", `Sign-in failed on attempt ${attempt}/${MAX_SIGNIN_RETRY_ATTEMPTS} — rotating proxy IP`);
+      await this.persistJobSnapshot(job, { forcePreview: false });
+    }
+
+    // All retry attempts exhausted
+    this.finalizeAccount(account, "failed", {
+      error: `AutoClaw sign-in failed after ${MAX_SIGNIN_RETRY_ATTEMPTS} attempts with different proxy IPs. The account may be rate-limited or blocked.`,
+      step: "signin_failed_exhausted",
+      message: `Sign-in failed after ${MAX_SIGNIN_RETRY_ATTEMPTS} attempts`,
+    });
+    account.password = undefined;
+    if (ownsBrowser && currentBrowser) {
+      await currentBrowser.close().catch(() => null);
+      if (job.workerBrowsers) job.workerBrowsers.delete(currentBrowser);
+    }
+    await this.persistJobSnapshot(job, { forcePreview: false });
+  }
+
+  async processAccountOnce(job, account, workerId, browser, currentProxyUrl, attempt = 1) {
     if (job.cancelRequested || !browser) {
       this.finalizeAccount(account, "cancelled", { error: "Job cancelled" });
-      return;
+      return "done";
     }
 
     const deviceId = crypto.randomUUID();
@@ -53,7 +155,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
     account.runtimeSession = {
       context,
       page,
-      proxyUrl: browser.__ninerouterProxyUrl || job.proxyUrl || null,
+      proxyUrl: currentProxyUrl || browser.__ninerouterProxyUrl || job.proxyUrl || null,
     };
 
     try {
@@ -90,7 +192,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
         account.runtimeSession = null;
         await context.close().catch(() => null);
         await this.persistJobSnapshot(job, { forcePreview: false });
-        return;
+        return "done";
       }
 
       if (automationResult.status === "needs_manual") {
@@ -116,7 +218,15 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
           callbackPromise,
           deviceId
         );
-        return;
+        return "done";
+      }
+
+      if (automationResult.status === "needs_retry") {
+        // Sign-in failed (rate limit / IP block). Close context and signal
+        // the retry loop in processAccount to re-launch with fresh proxy IP.
+        account.runtimeSession = null;
+        await context.close().catch(() => null);
+        return "needs_retry";
       }
 
       const terminalStatus = ["failed", "failed_invalid_credentials", "failed_timeout", "failed_restricted", "cancelled"].includes(
@@ -132,6 +242,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
       account.runtimeSession = null;
       await context.close().catch(() => null);
       await this.persistJobSnapshot(job, { forcePreview: false });
+      return "done";
     } catch (error) {
       this.finalizeAccount(account, "failed", {
         error: error.message || "Unexpected AutoClaw bulk import failure.",
@@ -141,8 +252,12 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
       account.runtimeSession = null;
       await context.close().catch(() => null);
       await this.persistJobSnapshot(job, { forcePreview: false });
+      return "done";
     } finally {
-      account.password = undefined;
+      // Only clear password on final attempt — retry needs it
+      if (attempt >= MAX_SIGNIN_RETRY_ATTEMPTS) {
+        account.password = undefined;
+      }
     }
   }
 

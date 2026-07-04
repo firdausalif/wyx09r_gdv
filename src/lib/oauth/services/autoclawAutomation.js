@@ -114,6 +114,28 @@ export function createAutoclawTokenMonitor(context, timeoutMs = DEFAULT_MANUAL_T
 }
 
 /**
+ * Poll for a selector to appear (visible). Returns true as soon as the selector
+ * is visible, false on timeout. This replaces fixed `waitForTimeout` delays
+ * after clicking a button — instead of waiting a fixed 1.5-2s, we poll every
+ * 200ms and advance immediately when the next screen renders.
+ */
+async function waitForSelectorVisible(page, selectors, { timeoutMs = 10_000, pollIntervalMs = 200 } = {}) {
+  const sel = Array.isArray(selectors) ? selectors.join(", ") : selectors;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const loc = page.locator(sel).first();
+      const visible = await loc.isVisible({ timeout: pollIntervalMs }).catch(() => false);
+      if (visible) return true;
+    } catch {
+      // page may be navigating — keep polling
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  return false;
+}
+
+/**
  * Wait for a DOM load state with periodic step reporting so the UI does not
  * look like the worker is hung while the page is still loading through a slow
  * proxy. Reports every ~5s with elapsed seconds.
@@ -403,10 +425,11 @@ export async function runAutoclawGoogleAutomation({
   }
 
   if (navOk) {
-    // Give the SPA a moment to paint its initial shell. Do NOT wait for "load"
-    // — it depends on external resources that are slow through proxies.
+    // Wait for SPA to render login button — poll instead of fixed delay.
+    // The login button selectors are checked every 200ms; as soon as one is
+    // visible, we advance. Max 10s fallback.
     reportStep("autoclaw_web_dom_loading", "AutoClaw web app DOM ready — waiting for SPA render");
-    await page.waitForTimeout(2000 + Math.floor(Math.random() * 1500));
+    await waitForSelectorVisible(page, AUTOCLAW_LOGIN_BUTTON_SELECTORS, { timeoutMs: 10_000 });
   }
 
   // 2. Click login/register button to open login modal — poll until visible
@@ -424,7 +447,9 @@ export async function runAutoclawGoogleAutomation({
       error: "Could not find AutoClaw login button. The web UI may have changed.",
     };
   }
-  await page.waitForTimeout(1500 + Math.floor(Math.random() * 1000));
+  // Wait for login modal to render "Continue with Zai" button — poll instead
+  // of fixed 1.5s delay.
+  await waitForSelectorVisible(page, AUTOCLAW_ZAI_BUTTON_SELECTORS, { timeoutMs: 8_000 });
 
   // 3. Click "Continue with Zai" — opens a new tab (popup). Poll until visible.
   reportStep("clicking_continue_with_zai", "Looking for Continue with Zai button");

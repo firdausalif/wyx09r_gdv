@@ -1,6 +1,37 @@
 const DEFAULT_SHORT_TIMEOUT_MS = 90_000;
 const DEFAULT_MANUAL_TIMEOUT_MS = 15 * 60_000;
 
+/**
+ * Smart wait after an action (click, submit). Instead of a fixed delay, poll
+ * for either URL change (navigation) or target selector visible (next screen
+ * rendered). Returns immediately when either condition is met. This replaces
+ * the old `page.waitForTimeout(1500)` / `waitForTimeout(2000)` pattern that
+ * added 1-2s of dead time even when the page had already rendered.
+ *
+ * Returns "url_changed" | "selector_visible" | "timeout".
+ */
+async function waitForNextStep(page, { baselineUrl = null, targetSelectors = [], timeoutMs = 8_000, pollIntervalMs = 200 } = {}) {
+  const url = baselineUrl || (() => { try { return page.url(); } catch { return ""; } })();
+  const deadline = Date.now() + timeoutMs;
+  const sel = Array.isArray(targetSelectors) && targetSelectors.length > 0
+    ? targetSelectors.join(", ")
+    : null;
+
+  while (Date.now() < deadline) {
+    try {
+      if (page.url() !== url) return "url_changed";
+    } catch {}
+    if (sel) {
+      try {
+        const visible = await page.locator(sel).first().isVisible({ timeout: pollIntervalMs }).catch(() => false);
+        if (visible) return "selector_visible";
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  return "timeout";
+}
+
 // Comma-separated CSS selector. Includes Google's stable ID, mobile/legacy form
 // names, and aria-label fallbacks for English + Indonesian. Multi-language
 // aria-label support matters because Google renders the form in the user's
@@ -329,6 +360,30 @@ const RESTRICTED_ACCOUNT_MARKERS = [
   "访问被拒绝",
   "帐号已被锁定",
   "账号已被锁定",
+];
+
+// AutoClaw / Z.ai sign-in failure markers. When the OAuth redirect lands back
+// on autoclaw.z.ai but the page shows a sign-in error (usually IP rate limit
+// or Google rejected the session), we should retry with a fresh proxy IP.
+const SIGNIN_FAILED_MARKERS = [
+  "sign-in failed",
+  "signin failed",
+  "sign in failed",
+  "login failed",
+  "登录失败",
+  "登陆失败",
+  "认证失败",
+  "授权失败",
+  "oauth failed",
+  "authentication failed",
+  "too many requests",
+  "rate limit",
+  "rate limited",
+  "请求过于频繁",
+  "频率过高",
+  "请稍后重试",
+  "try again later",
+  "retry",
 ];
 
 const GOOGLE_ONBOARDING_MARKERS = [
@@ -784,12 +839,16 @@ async function handleGoogleConsent(page, reportStep) {
     if (root) root.scrollTop = root.scrollHeight;
     window.scrollTo(0, document.body?.scrollHeight || document.documentElement?.scrollHeight || 0);
   }).catch(() => null);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
 
   const clickedApprove = await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS);
   if (clickedApprove) {
     reportStep("approving_google_consent", "Approving Google OAuth consent");
-    await page.waitForTimeout(1000);
+    // Wait for URL change after consent — poll instead of 1s fixed.
+    await waitForNextStep(page, {
+      baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+      timeoutMs: 5_000,
+    });
     return true;
   }
 
@@ -1404,7 +1463,8 @@ async function handleZaiAuthorizePage(page, reportStep) {
   const checkboxChecked = await checkFirstVisible(page, TERMS_CHECKBOX_SELECTORS);
   if (checkboxChecked) {
     reportStep("accepting_zai_authorize_tos", "Accepted Z.ai authorize TOS checkbox");
-    await page.waitForTimeout(500);
+    // Brief pause for checkbox state to settle — 200ms poll, not 500ms fixed.
+    await page.waitForTimeout(200);
   }
 
   const clickedContinue = await clickFirstActionable(page, [
@@ -1413,7 +1473,17 @@ async function handleZaiAuthorizePage(page, reportStep) {
   ]);
   if (clickedContinue) {
     reportStep("approving_zai_authorize", "Approved Z.ai authorize — continuing to AutoClaw");
-    await page.waitForTimeout(1500);
+    // Wait for redirect to autoclaw.z.ai instead of fixed 1.5s delay.
+    // The authorize page redirects back to AutoClaw with ?webOAuthCallback=zai.
+    await waitForNextStep(page, {
+      targetSelectors: [
+        'button:has-text("去注册")',
+        'button:has-text("登录")',
+        '[class*="login-gate"]',
+        '[class*="autoclaw"]',
+      ],
+      timeoutMs: 10_000,
+    });
     return true;
   }
 
@@ -1594,9 +1664,14 @@ export async function runGoogleAccountAutomation({
           : `${serviceLabel} login page did not expose expected controls before timeout`
       );
     }
-    await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
+    // Wait for email input or Google button to appear — poll instead of fixed delay.
+    await waitForNextStep(page, {
+      targetSelectors: [EMAIL_INPUT_SELECTOR, ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(0, 3)],
+      timeoutMs: 8_000,
+    });
   } else {
-    await page.waitForTimeout(1000 + Math.floor(Math.random() * 1000));
+    // Already on the page — brief jitter for human-like behavior, then proceed.
+    await page.waitForTimeout(300 + Math.floor(Math.random() * 400));
   }
 
   await handleProviderLoginGate(page, reportStep);
@@ -1605,13 +1680,13 @@ export async function runGoogleAccountAutomation({
   if (emailInput) {
     reportStep("entering_email", "Entering Google email");
     await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
-    await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
+    await page.waitForTimeout(150 + Math.floor(Math.random() * 200));
     const filled = await fillInputResilient(emailInput, email);
     if (!filled) {
       reportStep("email_fill_failed", "Could not fill the Google email field; will retry in the polling loop");
     } else {
       reportStep("submitting_email", "Submitting email");
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
+      await page.waitForTimeout(200 + Math.floor(Math.random() * 200));
       await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
     }
   }
@@ -1656,6 +1731,17 @@ export async function runGoogleAccountAutomation({
       const currentUrl = page.url();
       const urlObj = new URL(currentUrl);
       if (urlObj.hostname.includes("autoclaw.z.ai")) {
+        // Check if AutoClaw is showing a sign-in failure error (rate limit,
+        // IP block, OAuth rejected). If so, return needs_retry so the bulk
+        // manager can re-launch with a fresh proxy IP.
+        const pageText = await readPageText(page).catch(() => "");
+        if (pageText && includesAny(pageText, SIGNIN_FAILED_MARKERS)) {
+          reportStep("signin_failed_retry", `AutoClaw sign-in failed (likely IP rate limit) — retrying with fresh proxy IP`);
+          return {
+            status: "needs_retry",
+            error: "AutoClaw sign-in failed — IP may be rate limited. Retrying with a fresh proxy IP.",
+          };
+        }
         reportStep("waiting_for_token", `Redirected back — waiting for token extraction`);
         await page.waitForTimeout(1000);
         continue;
@@ -1715,16 +1801,14 @@ export async function runGoogleAccountAutomation({
         const filled = await fillInputResilient(nextEmailInput, email);
         if (filled) {
           reportStep("submitting_email", "Submitting email");
-          await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
+          await page.waitForTimeout(200 + Math.floor(Math.random() * 200));
           await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
-          // Navigation guard: wait for URL to leave /identifier? path so the
-          // loop does not re-detect the stale email input and re-submit.
-          try {
-            await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
-          } catch {
-            // Page didn't navigate; the loop will handle retry.
-          }
-          await page.waitForTimeout(2000);
+          // Wait for password field or URL change — poll instead of fixed 2s.
+          await waitForNextStep(page, {
+            baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+            targetSelectors: [PASSWORD_INPUT_SELECTOR],
+            timeoutMs: 10_000,
+          });
         } else {
           reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
         }
@@ -1734,28 +1818,34 @@ export async function runGoogleAccountAutomation({
       const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
       if (passwordInput) {
         reportStep("entering_password", "Entering Google password");
-        await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
+        await page.waitForTimeout(200 + Math.floor(Math.random() * 300));
         await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
-        await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
+        await page.waitForTimeout(100 + Math.floor(Math.random() * 200));
         const filled = await fillInputResilient(passwordInput, password);
         if (filled) {
           reportStep("submitting_password", "Submitting password");
-          await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
+          await page.waitForTimeout(200 + Math.floor(Math.random() * 300));
           await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
         } else {
           reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
         }
-        try {
-          await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
-        } catch {}
-        await page.waitForTimeout(2000);
+        // Wait for URL change (consent page or redirect) — poll instead of 2s fixed.
+        await waitForNextStep(page, {
+          baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+          targetSelectors: [APPROVE_BUTTON_SELECTORS[0], ...APPROVE_BUTTON_SELECTORS.slice(1, 3)],
+          timeoutMs: 10_000,
+        });
         continue;
       }
 
       const clickedApprove = await clickFirstVisible(page, APPROVE_BUTTON_SELECTORS);
       if (clickedApprove) {
         reportStep("approving_consent", `Approving Google or ${serviceLabel} consent`);
-        await page.waitForTimeout(700);
+        // Wait for URL change after consent — poll instead of 700ms fixed.
+        await waitForNextStep(page, {
+          baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+          timeoutMs: 5_000,
+        });
         continue;
       }
 

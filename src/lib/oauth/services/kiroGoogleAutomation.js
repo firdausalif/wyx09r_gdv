@@ -1,3 +1,5 @@
+import { solveShumeiCaptcha } from "@/lib/oauth/utils/captchaSolver.js";
+
 const DEFAULT_SHORT_TIMEOUT_MS = 90_000;
 const DEFAULT_MANUAL_TIMEOUT_MS = 15 * 60_000;
 
@@ -1772,6 +1774,20 @@ export async function runGoogleAccountAutomation({
       }
 
       if (includesAny(text, MANUAL_ASSIST_MARKERS)) {
+        // Check if this is a Shumei slider captcha — auto-solve if possible
+        await page.waitForLoadState("domcontentloaded").catch(() => null);
+        const isShumeiCaptcha = await page.locator(".shumei_captcha_wrapper").first().isVisible({ timeout: 1_500 }).catch(() => false);
+        if (isShumeiCaptcha) {
+          reportStep("detected_shumei_captcha", "Shumei slider captcha detected on Google login — attempting auto-solve");
+          const solved = await solveShumeiCaptcha(page, { timeout: 10_000 });
+          if (solved) {
+            reportStep("solved_shumei_captcha", "Shumei slider captcha solved automatically — continuing login");
+            continue;
+          }
+          reportStep("failed_shumei_captcha", "Shumei auto-solve failed — falling back to manual assist");
+        } else {
+          reportStep("no_shumei_captcha", "No Shumei captcha — falling back to manual assist for other challenge type");
+        }
         reportStep("manual_assist_required", "Google requested CAPTCHA, 2FA, or recovery verification");
         return {
           status: "needs_manual",

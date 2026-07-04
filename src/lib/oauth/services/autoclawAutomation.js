@@ -1,4 +1,5 @@
 import { runGoogleAccountAutomation } from "./kiroGoogleAutomation.js";
+import { solveShumeiCaptcha } from "@/lib/oauth/utils/captchaSolver.js";
 
 const AUTOCLAW_WEB_URL = "https://autoclaw.z.ai/web/";
 const DEFAULT_SHORT_TIMEOUT_MS = 5 * 60_000; // 5 minutes — proxy flows need room
@@ -245,6 +246,22 @@ async function waitForZaiPopup(context, mainPage, timeoutMs, reportStep) {
   let popup = null;
   let lastReportedElapsed = -1;
 
+  // Captcha solve can open the popup before this watcher starts. Reuse an
+  // existing non-main tab instead of waiting for a future page event forever.
+  const existingPopup = context.pages().find((p) => p !== mainPage);
+  if (existingPopup) {
+    reportStep("zai_popup_opened", "Z.ai auth popup tab already open — waiting for commit");
+    await waitForLoadStateWithProgress(
+      existingPopup,
+      "commit",
+      DOM_READY_TIMEOUT_MS,
+      reportStep,
+      "zai_popup_dom_loading",
+      "Z.ai auth popup loading"
+    );
+    return { popup: existingPopup, isPopup: true };
+  }
+
   while (Date.now() - startedAt < timeoutMs) {
     const elapsed = Math.floor((Date.now() - startedAt) / 1000);
     if (elapsed !== lastReportedElapsed) {
@@ -298,6 +315,9 @@ async function waitForZaiAuthReady(page, timeoutMs, reportStep) {
     'button:has-text("Login")',
     'button:has-text("Sign in")',
   ].join(", ");
+
+  // Ensure DOM is loaded before any interaction
+  await page.waitForLoadState("domcontentloaded").catch(() => null);
 
   const startedAt = Date.now();
   let lastReportedElapsed = -1;
@@ -464,6 +484,42 @@ export async function runAutoclawGoogleAutomation({
       status: "failed",
       error: "Could not find 'Continue with Zai' button on AutoClaw login modal.",
     };
+  }
+
+  // 3b. Check for captcha on the main page before waiting for popup.
+  //     After clicking "Continue with Zai", Shumei captcha may appear as an
+  //     overlay/modal on the same page, blocking the popup from opening.
+  //     The captcha JS + CDN images take time to load — wait properly.
+  await page.waitForLoadState("networkidle").catch(() => null);
+  const mainCaptcha = await page.waitForSelector(".shumei_captcha_wrapper", { state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+  if (mainCaptcha) {
+    reportStep("detected_captcha_main", "Shumei captcha detected on main page after Zai click — solving");
+    let solved = false;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      reportStep("solving_captcha_main", `Solving Shumei captcha attempt ${attempt}/3`);
+      solved = await solveShumeiCaptcha(page, { timeout: 20_000 });
+      if (solved) break;
+
+      const stillVisible = await page.locator(".shumei_captcha_wrapper").first().isVisible({ timeout: 1_000 }).catch(() => false);
+      if (!stillVisible) {
+        solved = true;
+        break;
+      }
+      reportStep("retrying_captcha_main", `Shumei captcha still visible after attempt ${attempt}/3 — waiting before retry`);
+      await page.waitForTimeout(3_000);
+    }
+
+    if (solved) {
+      reportStep("solved_captcha_main", "Shumei captcha solved on main page — continuing");
+    } else {
+      reportStep("failed_captcha_main", "Shumei captcha auto-solve failed after 3 attempts — manual assist required");
+      return {
+        status: "needs_manual",
+        error: "Shumei captcha auto-solve failed after 3 attempts. Manual assist required in the browser session.",
+      };
+    }
+  } else {
+    reportStep("no_captcha_main", "No Shumei captcha on main page — proceeding to popup");
   }
 
   // 4. Wait for the Z.ai auth popup tab to open. Falls back to same-tab if

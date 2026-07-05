@@ -127,6 +127,7 @@ export default function BulkAccountAutomationModal({
   const [headless, setHeadless] = useState(cachedConfig.headless ?? false);
   const [proxyPoolId, setProxyPoolId] = useState(cachedConfig.proxyPoolId ?? "");
   const [proxyUrl, setProxyUrl] = useState(cachedConfig.proxyUrl ?? "");
+  const [randomizeProxySession, setRandomizeProxySession] = useState(cachedConfig.randomizeProxySession ?? false);
   const [proxyPools, setProxyPools] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [error, setError] = useState(null);
@@ -138,12 +139,12 @@ export default function BulkAccountAutomationModal({
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const config = { engine, headless, proxyPoolId, proxyUrl, autoConcurrency, concurrency };
+      const config = { engine, headless, proxyPoolId, proxyUrl, randomizeProxySession, autoConcurrency, concurrency };
       window.localStorage.setItem(configStorageKey, JSON.stringify(config));
     } catch {
       // localStorage might be full or disabled — ignore
     }
-  }, [configStorageKey, engine, headless, proxyPoolId, proxyUrl, autoConcurrency, concurrency]);
+  }, [configStorageKey, engine, headless, proxyPoolId, proxyUrl, randomizeProxySession, autoConcurrency, concurrency]);
 
   const runningJob = activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status);
   const finishedJob = activeJob && TERMINAL_JOB_STATUSES.has(activeJob.status);
@@ -339,6 +340,7 @@ export default function BulkAccountAutomationModal({
       } else if (proxyUrl.trim()) {
         postBody.proxyUrl = proxyUrl.trim();
       }
+      postBody.randomizeProxySession = randomizeProxySession;
       const res = await fetch(`/api/oauth/${provider}/bulk-import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -543,6 +545,15 @@ export default function BulkAccountAutomationModal({
                     disabled={Boolean(proxyPoolId)}
                     placeholder="http://user:pass@host:port"
                   />
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={randomizeProxySession}
+                      onChange={(event) => setRandomizeProxySession(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border"
+                    />
+                    <span>Randomize proxy session ID on launch (changes <code className="rounded bg-sidebar px-1">sid-*</code> when present).</span>
+                  </label>
                 </div>
               </div>
               <p className="mt-1 text-xs text-text-muted">

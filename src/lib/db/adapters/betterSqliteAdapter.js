@@ -1,12 +1,26 @@
 import { createRequire } from "node:module";
+import path from "node:path";
+import os from "node:os";
 import { PRAGMA_SQL } from "../schema.js";
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
+const RUNTIME_NM = path.join(os.homedir(), ".9router", "runtime", "node_modules");
+const AUTOMATION_NM = path.join(os.homedir(), ".9router", "automation-runtime", "node_modules");
 
 function loadDatabase() {
-  const requireFromHere = createRequire(import.meta.url);
-  const mod = requireFromHere(["better", "sqlite3"].join("-"));
-  return mod.default || mod;
+  const tryRequire = (base) => {
+    try {
+      const req = createRequire(base);
+      const mod = req(["better", "sqlite3"].join("-"));
+      return mod.default || mod;
+    } catch {}
+    return null;
+  };
+
+  return tryRequire(import.meta.url)
+    || tryRequire(path.join(RUNTIME_NM, "better-sqlite3", "package.json"))
+    || tryRequire(path.join(AUTOMATION_NM, "better-sqlite3", "package.json"))
+    || (() => { throw new Error("better-sqlite3 not found in project node_modules, ~/.9router/runtime, or ~/.9router/automation-runtime"); })();
 }
 
 export function createBetterSqliteAdapter(filePath) {

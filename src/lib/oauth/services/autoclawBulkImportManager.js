@@ -5,7 +5,11 @@ import {
   buildLookupResponse,
 } from "./kiroBulkImportManager.js";
 import { createAutoclawTokenMonitor, runAutoclawGoogleAutomation } from "./autoclawAutomation.js";
-import { createProviderConnection } from "../../../models/index.js";
+import { createProviderConnection, getProviderConnectionById } from "../../../models/index.js";
+import {
+  recoverAutoclawTokenCheckpoints,
+  writeAutoclawTokenCheckpoint,
+} from "./autoclawTokenCheckpoint.js";
 
 const AUTOCLAW_PROVIDER_ID = "autoclaw";
 const MAX_SIGNIN_RETRY_ATTEMPTS = 3;
@@ -25,7 +29,7 @@ function rotateProxySessionId(proxyUrl) {
     if (!parsed.username) return proxyUrl;
     // Match sid-XXXX pattern in username and replace with new random sid
     const newSid = Math.random().toString(36).slice(2, 10);
-    const newUsername = parsed.username.replace(/sid-[a-zA-Z0-9_-]+/i, `sid-${newSid}`);
+    const newUsername = parsed.username.replace(/sid-[a-zA-Z0-9_]+/i, `sid-${newSid}`);
     if (newUsername === parsed.username) return proxyUrl; // no sid pattern found
     parsed.username = newUsername;
     return parsed.toString();
@@ -54,6 +58,13 @@ async function defaultSocialExchange({ access_token, refresh_token, user_id, use
     },
   });
   return { connection: conn };
+}
+
+async function assertConnectionPersisted(connection) {
+  if (!connection?.id) throw new Error("AutoClaw connection save returned no connection id");
+  const saved = await getProviderConnectionById(connection.id);
+  if (!saved) throw new Error(`AutoClaw connection ${connection.id} was not found in the database after save`);
+  return saved;
 }
 
 export class AutoclawBulkImportManager extends KiroBulkImportManager {
@@ -167,6 +178,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
         email: account.email,
         password: account.password,
         deviceId,
+        proxyUrl: currentProxyUrl || browser.__ninerouterProxyUrl || job.proxyUrl || null,
         callbackPromise,
         onStep: (step, message) => {
           this.setAccountStep(account, step, message);
@@ -177,6 +189,18 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
       if (automationResult.status === "success") {
         this.setAccountStep(account, "exchanging_tokens", "Saving AutoClaw connection");
         await this.persistJobSnapshot(job, { forcePreview: false });
+        writeAutoclawTokenCheckpoint({
+          jobId: job.jobId,
+          line: account.line,
+          email: account.email,
+          tokens: {
+            accessToken: automationResult.access_token,
+            refreshToken: automationResult.refresh_token,
+            deviceId: automationResult.device_id,
+            userId: automationResult.user_id,
+            userName: automationResult.user_name,
+          },
+        });
         const { connection } = await this.socialExchange({
           access_token: automationResult.access_token,
           refresh_token: automationResult.refresh_token,
@@ -184,6 +208,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
           user_name: automationResult.user_name,
           device_id: automationResult.device_id,
         });
+        await assertConnectionPersisted(connection);
         this.finalizeAccount(account, "success", {
           connectionId: connection.id,
           step: "connection_saved",
@@ -284,6 +309,18 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
 
         this.setAccountStep(account, "exchanging_tokens", "Saving AutoClaw connection");
         await this.persistJobSnapshot(job, { forcePreview: false });
+        writeAutoclawTokenCheckpoint({
+          jobId: job.jobId,
+          line: account.line,
+          email: account.email,
+          tokens: {
+            accessToken: callback.access_token,
+            refreshToken: callback.refresh_token,
+            deviceId: callback.device_id,
+            userId: callback.user_id,
+            userName: callback.user_name,
+          },
+        });
         const { connection } = await this.socialExchange({
           access_token: callback.access_token,
           refresh_token: callback.refresh_token,
@@ -291,6 +328,7 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
           user_name: callback.user_name,
           device_id: callback.device_id,
         });
+        await assertConnectionPersisted(connection);
 
         this.finalizeAccount(account, "success", {
           connectionId: connection.id,
@@ -323,6 +361,16 @@ export class AutoclawBulkImportManager extends KiroBulkImportManager {
     })();
 
     job.manualFollowups.add(followupPromise);
+  }
+
+  async getJobWithPreview(jobId) {
+    await recoverAutoclawTokenCheckpoints();
+    return super.getJobWithPreview(jobId);
+  }
+
+  async getLatestJobWithPreview(options) {
+    await recoverAutoclawTokenCheckpoints();
+    return super.getLatestJobWithPreview(options);
   }
 
 }

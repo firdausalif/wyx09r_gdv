@@ -279,10 +279,24 @@ function normalizeProxyUrls(proxyUrl, proxyUrls) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+export function randomizeProxySessionId(proxyUrl) {
+  if (!proxyUrl) return proxyUrl;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!parsed.username || !/sid-[a-zA-Z0-9_]+/i.test(parsed.username)) return proxyUrl;
+    parsed.username = parsed.username.replace(/sid-[a-zA-Z0-9_]+/i, `sid-${randomUUID().replaceAll("-", "").slice(0, 10)}`);
+    return parsed.toString();
+  } catch {
+    return proxyUrl;
+  }
+}
+
 function resolveWorkerProxyUrl(job, workerId) {
   const proxyUrls = Array.isArray(job.proxyUrls) ? job.proxyUrls : [];
-  if (proxyUrls.length > 1) return proxyUrls[(Math.max(1, workerId) - 1) % proxyUrls.length];
-  return job.proxyUrl || proxyUrls[0] || null;
+  const proxyUrl = proxyUrls.length > 1
+    ? proxyUrls[(Math.max(1, workerId) - 1) % proxyUrls.length]
+    : (job.proxyUrl || proxyUrls[0] || null);
+  return job.randomizeProxySession ? randomizeProxySessionId(proxyUrl) : proxyUrl;
 }
 
 async function defaultSocialExchange(args) {
@@ -538,7 +552,7 @@ export class KiroBulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, headless, jobFields }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, randomizeProxySession, headless, jobFields }) {
     const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
     if (!parsed.length) {
       const error = invalidLines.length > 0
@@ -570,6 +584,7 @@ export class KiroBulkImportManager {
       proxyMode: proxyMode || (resolvedProxyUrls.length > 1 ? "round-robin" : (resolvedProxyUrls.length === 1 ? "single" : "none")),
       proxyPoolId: proxyPoolId || null,
       proxySource: proxySource || null,
+      randomizeProxySession: Boolean(randomizeProxySession),
       createdAt,
       startedAt: createdAt,
       finishedAt: null,
@@ -1041,8 +1056,9 @@ export class KiroBulkImportManager {
     try {
       const useWorkerBrowsers = Array.isArray(job.proxyUrls) && job.proxyUrls.length > 1;
       if (!useWorkerBrowsers) {
-        job.browser = await this.browserLauncher(job);
-        job.browser.__ninerouterProxyUrl = job.proxyUrl || null;
+        const proxyUrl = resolveWorkerProxyUrl(job, 1);
+        job.browser = await this.browserLauncher({ ...job, proxyUrl });
+        job.browser.__ninerouterProxyUrl = proxyUrl || null;
       }
       job.accounts.forEach((account) => {
         if (account.status === "queued" && (account.logs || []).length === 1) {

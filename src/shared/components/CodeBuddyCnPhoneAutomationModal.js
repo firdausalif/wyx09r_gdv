@@ -90,6 +90,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
   const [product, setProduct] = useState("codebuddy");
   const [proxyPoolId, setProxyPoolId] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
+  const [randomizeProxySession, setRandomizeProxySession] = useState(false);
   const [proxyMode, setProxyMode] = useState("auto");
   const [proxyPools, setProxyPools] = useState([]);
   const [job, setJob] = useState(null);
@@ -196,9 +197,10 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
           count,
           country,
           operator,
-          product,
-          proxyMode,
-        };
+        product,
+        proxyMode,
+        randomizeProxySession,
+      };
         if (proxyPoolId) {
           body.proxyPoolId = proxyPoolId;
         } else if (proxyUrl.trim()) {
@@ -220,7 +222,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [count, country, fiveSimToken, isOpen, job, operator, product, proxyMode, proxyPoolId, proxyUrl]);
+  }, [count, country, fiveSimToken, isOpen, job, operator, product, proxyMode, proxyPoolId, proxyUrl, randomizeProxySession]);
 
   const startJob = async () => {
     setStarting(true);
@@ -233,6 +235,7 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
         operator,
         product,
         proxyMode,
+        randomizeProxySession,
         concurrency: Math.min(Number.parseInt(count, 10) || 1, 4),
         engine: DEFAULT_ENGINE,
       };
@@ -450,6 +453,15 @@ export default function CodeBuddyCnPhoneAutomationModal({ isOpen, onClose, onSuc
                     disabled={Boolean(proxyPoolId)}
                     placeholder="http://user:pass@host:port"
                   />
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={randomizeProxySession}
+                      onChange={(event) => setRandomizeProxySession(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border"
+                    />
+                    <span>Randomize proxy session ID on launch (changes <code className="rounded bg-sidebar px-1">sid-*</code> when present).</span>
+                  </label>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-text-muted">Proxy Strategy</label>

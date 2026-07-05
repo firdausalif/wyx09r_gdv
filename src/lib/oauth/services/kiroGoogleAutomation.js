@@ -424,6 +424,23 @@ const GOOGLE_WORKSPACE_WELCOME_MARKERS = [
   "您的组织管理员管理",
 ];
 
+const GOOGLE_REVERIFY_MARKERS = [
+  "verify it's you",
+  "verify it’s you",
+  "confirm it's you",
+  "confirm it’s you",
+  "continue to sign in",
+  "sign in to continue",
+  "choose an account to continue",
+  "re-enter your password",
+  "use another account",
+  "验证您的身份",
+  "确认是您本人",
+  "继续登录",
+  "选择一个帐号以继续",
+  "使用其他帐号",
+];
+
 const KIRO_CALLBACK_PREFIX = "kiro://kiro.kiroAgent/authenticate-success";
 
 function parseCallbackUrl(rawUrl) {
@@ -486,6 +503,51 @@ async function clickFirstActionable(page, selectors) {
     }
   }
 
+  return false;
+}
+
+async function pollAndClickFirstVisible(page, selectors, {
+  timeoutMs,
+  reportStep,
+  stepId,
+  notFoundMessage,
+  clickTimeoutMs = 5_000,
+  pollIntervalMs = 1_000,
+} = {}) {
+  const startedAt = Date.now();
+  let lastReportedElapsed = -1;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsed !== lastReportedElapsed) {
+      reportStep(stepId, `${notFoundMessage} (${elapsed}s)`);
+      lastReportedElapsed = elapsed;
+    }
+
+    for (const sel of selectors) {
+      try {
+        const loc = page.locator(sel).first();
+        const visible = await loc.isVisible({ timeout: 1_000 }).catch(() => false);
+        if (visible) {
+          const clicked = await loc
+            .click({ timeout: clickTimeoutMs })
+            .then(() => true)
+            .catch(() => false);
+          if (clicked) {
+            reportStep(stepId, `${notFoundMessage} — clicked (${elapsed}s)`);
+            return true;
+          }
+        }
+      } catch {
+        // keep polling
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  reportStep(stepId, `${notFoundMessage} — not found after ${elapsed}s`);
   return false;
 }
 
@@ -594,6 +656,44 @@ async function waitForCodeBuddyGoogleButton(page, timeoutMs = 15_000) {
     }
 
     await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
+async function waitForGoogleButtonOrZaiAuthorize(page, timeoutMs = 15_000) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const scope of getInteractionScopes(page)) {
+      const ready = await scope.evaluate(() => {
+        const visible = (element) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const box = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return box.width > 0
+            && box.height > 0
+            && style.visibility !== "hidden"
+            && style.display !== "none"
+            && Number(style.opacity) !== 0;
+        };
+
+        const googleButton = document.querySelector("a#social-google, #social-google, a[href*='broker/google'], a[href*='google/login']");
+        if (visible(googleButton)) return true;
+
+        const text = document.body?.innerText || "";
+        if (!/would like to access your.*account|wants to access your.*account|AutoGLM|autoglm/i.test(text)) return false;
+
+        const checkbox = document.querySelector("input[type='checkbox'][id*='agree' i], input[type='checkbox'][id*='policy' i], input[type='checkbox'][name*='agree' i], input[type='checkbox'][name*='terms' i], input[type='checkbox']");
+        const continueButton = [...document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+          .find((element) => /continue/i.test(element.innerText || element.value || "") && visible(element));
+        return visible(checkbox) || Boolean(continueButton);
+      }).catch(() => false);
+      if (ready) return true;
+    }
+
+    await page.waitForTimeout(200);
   }
 
   return false;
@@ -850,6 +950,42 @@ async function handleGoogleConsent(page, reportStep) {
     await waitForNextStep(page, {
       baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
       timeoutMs: 5_000,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+async function handleGoogleReVerify(page, reportStep) {
+  if (!isGoogleAuthPage(page)) return false;
+
+  // If password input is already visible this is the normal post-email
+  // password page, not a re-verify challenge — let the password handler run.
+  const passwordVisible = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR).catch(() => null);
+  if (passwordVisible) return false;
+
+  const text = await readPageText(page);
+  if (!includesAny(text, GOOGLE_REVERIFY_MARKERS)) return false;
+
+  // Wait for DOM settle — button may still be loading
+  await page.waitForTimeout(500);
+
+  const clicked = await clickFirstActionable(page, [
+    'button:has-text("Continue")',
+    'button:has-text("Next")',
+    'div[role="button"]:has-text("Continue")',
+    'div[role="button"]:has-text("Next")',
+    'button:has-text("Confirm")',
+    'button:has-text("Yes")',
+    'button:has-text("I understand")',
+    'button:has-text("Got it")',
+  ]);
+  if (clicked) {
+    reportStep("google_reverify", "Clicked continue on Google re-verify page");
+    await waitForNextStep(page, {
+      baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+      timeoutMs: 10_000,
     });
     return true;
   }
@@ -1457,26 +1593,42 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
 async function handleZaiAuthorizePage(page, reportStep) {
   if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
 
+  const pageUrl = (() => { try { return page.url(); } catch { return ""; } })();
+  const isZaiAuthUrl = pageUrl.includes("chat.z.ai/auth");
   const text = await readPageText(page);
   const isZaiAuthorize = /would like to access your.*account|wants to access your.*account/i.test(text)
-    || /AutoGLM|autoglm/i.test(text);
+    || /AutoGLM|autoglm/i.test(text)
+    || isZaiAuthUrl;
   if (!isZaiAuthorize) return false;
 
   const checkboxChecked = await checkFirstVisible(page, TERMS_CHECKBOX_SELECTORS);
   if (checkboxChecked) {
     reportStep("accepting_zai_authorize_tos", "Accepted Z.ai authorize TOS checkbox");
-    // Brief pause for checkbox state to settle — 200ms poll, not 500ms fixed.
     await page.waitForTimeout(200);
   }
 
-  const clickedContinue = await clickFirstActionable(page, [
+  // Poll for the Continue/authorize button — Z.ai page may take a moment to
+  // enable the button after checkbox state settles. One-shot clickFirstActionable
+  // fails when the button is still loading (16s gap observed in production).
+  const zaiContinueSelectors = [
     'button:has-text("Continue"):not([disabled])',
     'button:not([disabled]):has-text("Continue")',
-  ]);
-  if (clickedContinue) {
-    reportStep("approving_zai_authorize", "Approved Z.ai authorize — continuing to AutoClaw");
+    'button:has-text("同意")',
+    'button:has-text("授权")',
+    'button:has-text("允许")',
+    'button:has-text("Lanjutkan")',
+    'button:has-text("Authorize")',
+    'button:has-text("Allow")',
+  ];
+  const polled = await pollAndClickFirstVisible(page, zaiContinueSelectors, {
+    timeoutMs: 8_000,
+    reportStep,
+    stepId: "approving_zai_authorize",
+    notFoundMessage: "Waiting for Z.ai Continue button",
+    pollIntervalMs: 500,
+  });
+  if (polled) {
     // Wait for redirect to autoclaw.z.ai instead of fixed 1.5s delay.
-    // The authorize page redirects back to AutoClaw with ?webOAuthCallback=zai.
     await waitForNextStep(page, {
       targetSelectors: [
         'button:has-text("去注册")',
@@ -1509,8 +1661,12 @@ async function handleProviderLoginGate(page, reportStep) {
   if (checkedTerms) {
     reportStep("accepting_provider_terms", "Accepted provider terms for Google login");
     await page.waitForTimeout(400);
+    const handledZaiAfterTerms = await handleZaiAuthorizePage(page, reportStep);
+    if (handledZaiAfterTerms) return true;
     reportStep("waiting_google_signup_button", "Waiting for Sign up with Google button after accepting terms");
-    await waitForCodeBuddyGoogleButton(page);
+    await waitForGoogleButtonOrZaiAuthorize(page, 15_000);
+    const handledLateZaiAuthorize = await handleZaiAuthorizePage(page, reportStep);
+    if (handledLateZaiAuthorize) return true;
   }
 
   reportStep("clicking_google_signup", "Clicking Sign up with Google");
@@ -1625,6 +1781,12 @@ export function createKiroCallbackMonitor(context, page, timeoutMs = DEFAULT_MAN
 
   bind(context, page);
 
+  // Reject immediately when context is closed (cancelJob / crash) so the
+  // 15-min timeout doesn't block job cancellation.
+  context.on("close", () => {
+    settle(null, new Error("Browser context closed — callback monitoring stopped"));
+  });
+
   promise.rebind = ({ context: newContext, page: newPage } = {}) => {
     if (newContext) bind(newContext, newPage);
   };
@@ -1638,6 +1800,7 @@ export async function runGoogleAccountAutomation({
   skipNavigation = false,
   email,
   password,
+  proxyUrl = null,
   successPromise,
   shortTimeoutMs = DEFAULT_SHORT_TIMEOUT_MS,
   serviceLabel = "provider",
@@ -1738,7 +1901,14 @@ export async function runGoogleAccountAutomation({
         // manager can re-launch with a fresh proxy IP.
         const pageText = await readPageText(page).catch(() => "");
         if (pageText && includesAny(pageText, SIGNIN_FAILED_MARKERS)) {
-          reportStep("signin_failed_retry", `AutoClaw sign-in failed (likely IP rate limit) — retrying with fresh proxy IP`);
+          if (!proxyUrl) {
+            reportStep("signin_failed_manual", `AutoClaw sign-in failed without proxy — keeping browser open for inspection`);
+            return {
+              status: "needs_manual",
+              error: "AutoClaw sign-in failed and no proxy is active, so automatic fresh-IP retry is disabled. Browser left open for inspection.",
+            };
+          }
+          reportStep("signin_failed_retry", `AutoClaw sign-in failed (proxy active) — retrying with fresh proxy IP`);
           return {
             status: "needs_retry",
             error: "AutoClaw sign-in failed — IP may be rate limited. Retrying with a fresh proxy IP.",
@@ -1751,8 +1921,18 @@ export async function runGoogleAccountAutomation({
     } catch {}
 
     try {
+      const handledProviderGate = await handleProviderLoginGate(page, reportStep);
+      if (handledProviderGate) {
+        continue;
+      }
+
       const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
       if (handledGoogleConsent) {
+        continue;
+      }
+
+      const handledReVerify = await handleGoogleReVerify(page, reportStep);
+      if (handledReVerify) {
         continue;
       }
 
@@ -1801,11 +1981,6 @@ export async function runGoogleAccountAutomation({
         continue;
       }
 
-      const handledProviderGate = await handleProviderLoginGate(page, reportStep);
-      if (handledProviderGate) {
-        continue;
-      }
-
       const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
       if (handledProviderOnboarding) {
         continue;
@@ -1845,10 +2020,19 @@ export async function runGoogleAccountAutomation({
         } else {
           reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
         }
-        // Wait for URL change (consent page or redirect) — poll instead of 2s fixed.
+        // Wait for URL change (consent page, re-verify, or Z.ai authorize redirect) — poll instead of 2s fixed.
         await waitForNextStep(page, {
           baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
-          targetSelectors: [APPROVE_BUTTON_SELECTORS[0], ...APPROVE_BUTTON_SELECTORS.slice(1, 3)],
+          targetSelectors: [
+            APPROVE_BUTTON_SELECTORS[0],
+            ...APPROVE_BUTTON_SELECTORS.slice(1, 3),
+            ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(0, 6),
+            ...TERMS_CHECKBOX_SELECTORS.slice(0, 4),
+            '#agree-policy-account',
+            'button:has-text("Continue"):not([disabled])',
+            'button:has-text("Confirm")',
+            ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(6, 14),
+          ],
           timeoutMs: 10_000,
         });
         continue;

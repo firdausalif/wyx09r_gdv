@@ -79,7 +79,7 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
     this.saveConnection = saveConnection;
   }
 
-  async startJob({ fiveSimToken, count, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, country, operator, product }) {
+  async startJob({ fiveSimToken, count, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, randomizeProxySession, country, operator, product }) {
     const token = String(fiveSimToken || "").trim();
     if (!token) throw new Error("5sim API token is required");
     const total = clampCount(count);
@@ -93,6 +93,7 @@ export class CodeBuddyCnPhoneImportManager extends KiroBulkImportManager {
       proxyMode,
       proxyPoolId,
       proxySource,
+      randomizeProxySession,
       jobFields: {
         fiveSim: {
           country: country || "hongkong",

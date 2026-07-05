@@ -105,9 +105,15 @@ export function createAutoclawTokenMonitor(context, timeoutMs = DEFAULT_MANUAL_T
 
   intervalHandle = setInterval(async () => {
     if (settled) return;
-    const pages = context.pages();
-    for (const p of pages) {
-      if (await checkPage(p)) return;
+    try {
+      const pages = context.pages();
+      for (const p of pages) {
+        if (await checkPage(p)) return;
+      }
+    } catch {
+      // context closed (browser killed / job cancelled) — reject immediately
+      // so cancelJob doesn't hang waiting for the 15-min timeout
+      settle(null, new Error("Browser context closed — monitoring stopped"));
     }
   }, 500);
 
@@ -389,6 +395,7 @@ export async function runAutoclawGoogleAutomation({
   email,
   password,
   deviceId: _deviceId, // unused — web app generates its own
+  proxyUrl = null,
   callbackPromise,
   shortTimeoutMs = DEFAULT_SHORT_TIMEOUT_MS,
   onStep,
@@ -489,9 +496,8 @@ export async function runAutoclawGoogleAutomation({
   // 3b. Check for captcha on the main page before waiting for popup.
   //     After clicking "Continue with Zai", Shumei captcha may appear as an
   //     overlay/modal on the same page, blocking the popup from opening.
-  //     The captcha JS + CDN images take time to load — wait properly.
   await page.waitForLoadState("networkidle").catch(() => null);
-  const mainCaptcha = await page.waitForSelector(".shumei_captcha_wrapper", { state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+  const mainCaptcha = await page.waitForSelector(".shumei_captcha_wrapper", { state: "visible", timeout: 1_000 }).then(() => true).catch(() => false);
   if (mainCaptcha) {
     reportStep("detected_captcha_main", "Shumei captcha detected on main page after Zai click — solving");
     let solved = false;
@@ -554,6 +560,7 @@ export async function runAutoclawGoogleAutomation({
     skipNavigation: true,
     email,
     password,
+    proxyUrl,
     successPromise: callbackPromise,
     shortTimeoutMs,
     serviceLabel: "AutoClaw",

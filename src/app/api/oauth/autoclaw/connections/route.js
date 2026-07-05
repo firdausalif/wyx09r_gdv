@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/db";
+import { recoverAutoclawTokenCheckpoints } from "@/lib/oauth/services/autoclawTokenCheckpoint";
 import { getAutoclawBalance } from "open-sse/services/usage/autoclaw.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await recoverAutoclawTokenCheckpoints();
     const allConnections = await getProviderConnections({ provider: "autoclaw" });
     const active = (allConnections || []).filter((c) => c.isActive !== 0 && c.isActive !== false);
 

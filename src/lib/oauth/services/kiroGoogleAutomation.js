@@ -1,5 +1,38 @@
+import { solveShumeiCaptcha } from "@/lib/oauth/utils/captchaSolver.js";
+
 const DEFAULT_SHORT_TIMEOUT_MS = 90_000;
 const DEFAULT_MANUAL_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * Smart wait after an action (click, submit). Instead of a fixed delay, poll
+ * for either URL change (navigation) or target selector visible (next screen
+ * rendered). Returns immediately when either condition is met. This replaces
+ * the old `page.waitForTimeout(1500)` / `waitForTimeout(2000)` pattern that
+ * added 1-2s of dead time even when the page had already rendered.
+ *
+ * Returns "url_changed" | "selector_visible" | "timeout".
+ */
+async function waitForNextStep(page, { baselineUrl = null, targetSelectors = [], timeoutMs = 8_000, pollIntervalMs = 200 } = {}) {
+  const url = baselineUrl || (() => { try { return page.url(); } catch { return ""; } })();
+  const deadline = Date.now() + timeoutMs;
+  const sel = Array.isArray(targetSelectors) && targetSelectors.length > 0
+    ? targetSelectors.join(", ")
+    : null;
+
+  while (Date.now() < deadline) {
+    try {
+      if (page.url() !== url) return "url_changed";
+    } catch {}
+    if (sel) {
+      try {
+        const visible = await page.locator(sel).first().isVisible({ timeout: pollIntervalMs }).catch(() => false);
+        if (visible) return "selector_visible";
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  return "timeout";
+}
 
 // Comma-separated CSS selector. Includes Google's stable ID, mobile/legacy form
 // names, and aria-label fallbacks for English + Indonesian. Multi-language
@@ -331,6 +364,30 @@ const RESTRICTED_ACCOUNT_MARKERS = [
   "账号已被锁定",
 ];
 
+// AutoClaw / Z.ai sign-in failure markers. When the OAuth redirect lands back
+// on autoclaw.z.ai but the page shows a sign-in error (usually IP rate limit
+// or Google rejected the session), we should retry with a fresh proxy IP.
+const SIGNIN_FAILED_MARKERS = [
+  "sign-in failed",
+  "signin failed",
+  "sign in failed",
+  "login failed",
+  "登录失败",
+  "登陆失败",
+  "认证失败",
+  "授权失败",
+  "oauth failed",
+  "authentication failed",
+  "too many requests",
+  "rate limit",
+  "rate limited",
+  "请求过于频繁",
+  "频率过高",
+  "请稍后重试",
+  "try again later",
+  "retry",
+];
+
 const GOOGLE_ONBOARDING_MARKERS = [
   "welcome to your new google account",
   "selamat datang di akun google baru anda",
@@ -365,6 +422,23 @@ const GOOGLE_WORKSPACE_WELCOME_MARKERS = [
   "欢迎使用您的新账号",
   "您的管理员决定",
   "您的组织管理员管理",
+];
+
+const GOOGLE_REVERIFY_MARKERS = [
+  "verify it's you",
+  "verify it’s you",
+  "confirm it's you",
+  "confirm it’s you",
+  "continue to sign in",
+  "sign in to continue",
+  "choose an account to continue",
+  "re-enter your password",
+  "use another account",
+  "验证您的身份",
+  "确认是您本人",
+  "继续登录",
+  "选择一个帐号以继续",
+  "使用其他帐号",
 ];
 
 const KIRO_CALLBACK_PREFIX = "kiro://kiro.kiroAgent/authenticate-success";
@@ -429,6 +503,51 @@ async function clickFirstActionable(page, selectors) {
     }
   }
 
+  return false;
+}
+
+async function pollAndClickFirstVisible(page, selectors, {
+  timeoutMs,
+  reportStep,
+  stepId,
+  notFoundMessage,
+  clickTimeoutMs = 5_000,
+  pollIntervalMs = 1_000,
+} = {}) {
+  const startedAt = Date.now();
+  let lastReportedElapsed = -1;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (elapsed !== lastReportedElapsed) {
+      reportStep(stepId, `${notFoundMessage} (${elapsed}s)`);
+      lastReportedElapsed = elapsed;
+    }
+
+    for (const sel of selectors) {
+      try {
+        const loc = page.locator(sel).first();
+        const visible = await loc.isVisible({ timeout: 1_000 }).catch(() => false);
+        if (visible) {
+          const clicked = await loc
+            .click({ timeout: clickTimeoutMs })
+            .then(() => true)
+            .catch(() => false);
+          if (clicked) {
+            reportStep(stepId, `${notFoundMessage} — clicked (${elapsed}s)`);
+            return true;
+          }
+        }
+      } catch {
+        // keep polling
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  reportStep(stepId, `${notFoundMessage} — not found after ${elapsed}s`);
   return false;
 }
 
@@ -537,6 +656,44 @@ async function waitForCodeBuddyGoogleButton(page, timeoutMs = 15_000) {
     }
 
     await page.waitForTimeout(500);
+  }
+
+  return false;
+}
+
+async function waitForGoogleButtonOrZaiAuthorize(page, timeoutMs = 15_000) {
+  if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const scope of getInteractionScopes(page)) {
+      const ready = await scope.evaluate(() => {
+        const visible = (element) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const box = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return box.width > 0
+            && box.height > 0
+            && style.visibility !== "hidden"
+            && style.display !== "none"
+            && Number(style.opacity) !== 0;
+        };
+
+        const googleButton = document.querySelector("a#social-google, #social-google, a[href*='broker/google'], a[href*='google/login']");
+        if (visible(googleButton)) return true;
+
+        const text = document.body?.innerText || "";
+        if (!/would like to access your.*account|wants to access your.*account|AutoGLM|autoglm/i.test(text)) return false;
+
+        const checkbox = document.querySelector("input[type='checkbox'][id*='agree' i], input[type='checkbox'][id*='policy' i], input[type='checkbox'][name*='agree' i], input[type='checkbox'][name*='terms' i], input[type='checkbox']");
+        const continueButton = [...document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+          .find((element) => /continue/i.test(element.innerText || element.value || "") && visible(element));
+        return visible(checkbox) || Boolean(continueButton);
+      }).catch(() => false);
+      if (ready) return true;
+    }
+
+    await page.waitForTimeout(200);
   }
 
   return false;
@@ -784,12 +941,52 @@ async function handleGoogleConsent(page, reportStep) {
     if (root) root.scrollTop = root.scrollHeight;
     window.scrollTo(0, document.body?.scrollHeight || document.documentElement?.scrollHeight || 0);
   }).catch(() => null);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(150);
 
   const clickedApprove = await clickFirstActionable(page, APPROVE_BUTTON_SELECTORS);
   if (clickedApprove) {
     reportStep("approving_google_consent", "Approving Google OAuth consent");
-    await page.waitForTimeout(1000);
+    // Wait for URL change after consent — poll instead of 1s fixed.
+    await waitForNextStep(page, {
+      baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+      timeoutMs: 5_000,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+async function handleGoogleReVerify(page, reportStep) {
+  if (!isGoogleAuthPage(page)) return false;
+
+  // If password input is already visible this is the normal post-email
+  // password page, not a re-verify challenge — let the password handler run.
+  const passwordVisible = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR).catch(() => null);
+  if (passwordVisible) return false;
+
+  const text = await readPageText(page);
+  if (!includesAny(text, GOOGLE_REVERIFY_MARKERS)) return false;
+
+  // Wait for DOM settle — button may still be loading
+  await page.waitForTimeout(500);
+
+  const clicked = await clickFirstActionable(page, [
+    'button:has-text("Continue")',
+    'button:has-text("Next")',
+    'div[role="button"]:has-text("Continue")',
+    'div[role="button"]:has-text("Next")',
+    'button:has-text("Confirm")',
+    'button:has-text("Yes")',
+    'button:has-text("I understand")',
+    'button:has-text("Got it")',
+  ]);
+  if (clicked) {
+    reportStep("google_reverify", "Clicked continue on Google re-verify page");
+    await waitForNextStep(page, {
+      baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+      timeoutMs: 10_000,
+    });
     return true;
   }
 
@@ -1396,24 +1593,51 @@ async function handleProviderOnboarding(page, reportStep, serviceLabel) {
 async function handleZaiAuthorizePage(page, reportStep) {
   if (!isProviderPage(page) || isGoogleAuthPage(page)) return false;
 
+  const pageUrl = (() => { try { return page.url(); } catch { return ""; } })();
+  const isZaiAuthUrl = pageUrl.includes("chat.z.ai/auth");
   const text = await readPageText(page);
   const isZaiAuthorize = /would like to access your.*account|wants to access your.*account/i.test(text)
-    || /AutoGLM|autoglm/i.test(text);
+    || /AutoGLM|autoglm/i.test(text)
+    || isZaiAuthUrl;
   if (!isZaiAuthorize) return false;
 
   const checkboxChecked = await checkFirstVisible(page, TERMS_CHECKBOX_SELECTORS);
   if (checkboxChecked) {
     reportStep("accepting_zai_authorize_tos", "Accepted Z.ai authorize TOS checkbox");
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(200);
   }
 
-  const clickedContinue = await clickFirstActionable(page, [
+  // Poll for the Continue/authorize button — Z.ai page may take a moment to
+  // enable the button after checkbox state settles. One-shot clickFirstActionable
+  // fails when the button is still loading (16s gap observed in production).
+  const zaiContinueSelectors = [
     'button:has-text("Continue"):not([disabled])',
     'button:not([disabled]):has-text("Continue")',
-  ]);
-  if (clickedContinue) {
-    reportStep("approving_zai_authorize", "Approved Z.ai authorize — continuing to AutoClaw");
-    await page.waitForTimeout(1500);
+    'button:has-text("同意")',
+    'button:has-text("授权")',
+    'button:has-text("允许")',
+    'button:has-text("Lanjutkan")',
+    'button:has-text("Authorize")',
+    'button:has-text("Allow")',
+  ];
+  const polled = await pollAndClickFirstVisible(page, zaiContinueSelectors, {
+    timeoutMs: 8_000,
+    reportStep,
+    stepId: "approving_zai_authorize",
+    notFoundMessage: "Waiting for Z.ai Continue button",
+    pollIntervalMs: 500,
+  });
+  if (polled) {
+    // Wait for redirect to autoclaw.z.ai instead of fixed 1.5s delay.
+    await waitForNextStep(page, {
+      targetSelectors: [
+        'button:has-text("去注册")',
+        'button:has-text("登录")',
+        '[class*="login-gate"]',
+        '[class*="autoclaw"]',
+      ],
+      timeoutMs: 10_000,
+    });
     return true;
   }
 
@@ -1437,8 +1661,12 @@ async function handleProviderLoginGate(page, reportStep) {
   if (checkedTerms) {
     reportStep("accepting_provider_terms", "Accepted provider terms for Google login");
     await page.waitForTimeout(400);
+    const handledZaiAfterTerms = await handleZaiAuthorizePage(page, reportStep);
+    if (handledZaiAfterTerms) return true;
     reportStep("waiting_google_signup_button", "Waiting for Sign up with Google button after accepting terms");
-    await waitForCodeBuddyGoogleButton(page);
+    await waitForGoogleButtonOrZaiAuthorize(page, 15_000);
+    const handledLateZaiAuthorize = await handleZaiAuthorizePage(page, reportStep);
+    if (handledLateZaiAuthorize) return true;
   }
 
   reportStep("clicking_google_signup", "Clicking Sign up with Google");
@@ -1553,6 +1781,12 @@ export function createKiroCallbackMonitor(context, page, timeoutMs = DEFAULT_MAN
 
   bind(context, page);
 
+  // Reject immediately when context is closed (cancelJob / crash) so the
+  // 15-min timeout doesn't block job cancellation.
+  context.on("close", () => {
+    settle(null, new Error("Browser context closed — callback monitoring stopped"));
+  });
+
   promise.rebind = ({ context: newContext, page: newPage } = {}) => {
     if (newContext) bind(newContext, newPage);
   };
@@ -1566,6 +1800,7 @@ export async function runGoogleAccountAutomation({
   skipNavigation = false,
   email,
   password,
+  proxyUrl = null,
   successPromise,
   shortTimeoutMs = DEFAULT_SHORT_TIMEOUT_MS,
   serviceLabel = "provider",
@@ -1594,9 +1829,14 @@ export async function runGoogleAccountAutomation({
           : `${serviceLabel} login page did not expose expected controls before timeout`
       );
     }
-    await page.waitForTimeout(1500 + Math.floor(Math.random() * 1500));
+    // Wait for email input or Google button to appear — poll instead of fixed delay.
+    await waitForNextStep(page, {
+      targetSelectors: [EMAIL_INPUT_SELECTOR, ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(0, 3)],
+      timeoutMs: 8_000,
+    });
   } else {
-    await page.waitForTimeout(1000 + Math.floor(Math.random() * 1000));
+    // Already on the page — brief jitter for human-like behavior, then proceed.
+    await page.waitForTimeout(300 + Math.floor(Math.random() * 400));
   }
 
   await handleProviderLoginGate(page, reportStep);
@@ -1605,13 +1845,13 @@ export async function runGoogleAccountAutomation({
   if (emailInput) {
     reportStep("entering_email", "Entering Google email");
     await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
-    await page.waitForTimeout(300 + Math.floor(Math.random() * 500));
+    await page.waitForTimeout(150 + Math.floor(Math.random() * 200));
     const filled = await fillInputResilient(emailInput, email);
     if (!filled) {
       reportStep("email_fill_failed", "Could not fill the Google email field; will retry in the polling loop");
     } else {
       reportStep("submitting_email", "Submitting email");
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
+      await page.waitForTimeout(200 + Math.floor(Math.random() * 200));
       await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
     }
   }
@@ -1648,114 +1888,183 @@ export async function runGoogleAccountAutomation({
       };
     }
 
+    // Wrap the entire loop body in a try-catch so that "Target page, context
+    // or browser has been closed" errors (which happen when the proxy drops
+    // mid-navigation and Chromium kills the page) don't crash the worker.
+    // Instead, return needs_manual so the user can finish in the browser.
     try {
       const currentUrl = page.url();
       const urlObj = new URL(currentUrl);
       if (urlObj.hostname.includes("autoclaw.z.ai")) {
+        // Check if AutoClaw is showing a sign-in failure error (rate limit,
+        // IP block, OAuth rejected). If so, return needs_retry so the bulk
+        // manager can re-launch with a fresh proxy IP.
+        const pageText = await readPageText(page).catch(() => "");
+        if (pageText && includesAny(pageText, SIGNIN_FAILED_MARKERS)) {
+          if (!proxyUrl) {
+            reportStep("signin_failed_manual", `AutoClaw sign-in failed without proxy — keeping browser open for inspection`);
+            return {
+              status: "needs_manual",
+              error: "AutoClaw sign-in failed and no proxy is active, so automatic fresh-IP retry is disabled. Browser left open for inspection.",
+            };
+          }
+          reportStep("signin_failed_retry", `AutoClaw sign-in failed (proxy active) — retrying with fresh proxy IP`);
+          return {
+            status: "needs_retry",
+            error: "AutoClaw sign-in failed — IP may be rate limited. Retrying with a fresh proxy IP.",
+          };
+        }
         reportStep("waiting_for_token", `Redirected back — waiting for token extraction`);
         await page.waitForTimeout(1000);
         continue;
       }
     } catch {}
 
-    const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
-    if (handledGoogleConsent) {
-      continue;
-    }
+    try {
+      const handledProviderGate = await handleProviderLoginGate(page, reportStep);
+      if (handledProviderGate) {
+        continue;
+      }
 
-    const text = await readPageText(page);
-    if (includesAny(text, INVALID_CREDENTIAL_MARKERS)) {
-      reportStep("invalid_credentials", "Google rejected the supplied email or password");
-      return {
-        status: "failed_invalid_credentials",
-        error: "Google rejected the supplied email or password.",
-      };
-    }
+      const handledGoogleConsent = await handleGoogleConsent(page, reportStep);
+      if (handledGoogleConsent) {
+        continue;
+      }
 
-    if (includesAny(text, RESTRICTED_ACCOUNT_MARKERS)) {
-      reportStep("account_restricted", "Account is restricted, suspended, or banned by the provider");
-      return {
-        status: "failed_restricted",
-        error: "Account is restricted, suspended, or banned. Skipping.",
-      };
-    }
+      const handledReVerify = await handleGoogleReVerify(page, reportStep);
+      if (handledReVerify) {
+        continue;
+      }
 
-    if (includesAny(text, MANUAL_ASSIST_MARKERS)) {
-      reportStep("manual_assist_required", "Google requested CAPTCHA, 2FA, or recovery verification");
-      return {
-        status: "needs_manual",
-        error: "Manual assist required in the browser session (CAPTCHA, 2FA, recovery, or suspicious-login challenge).",
-      };
-    }
+      const text = await readPageText(page);
+      if (includesAny(text, INVALID_CREDENTIAL_MARKERS)) {
+        reportStep("invalid_credentials", "Google rejected the supplied email or password");
+        return {
+          status: "failed_invalid_credentials",
+          error: "Google rejected the supplied email or password.",
+        };
+      }
 
-    const handledOnboarding = await handleGoogleOnboarding(page, text);
-    if (handledOnboarding) {
-      reportStep("google_onboarding", "Accepted Google onboarding or privacy prompt");
-      continue;
-    }
+      if (includesAny(text, RESTRICTED_ACCOUNT_MARKERS)) {
+        reportStep("account_restricted", "Account is restricted, suspended, or banned by the provider");
+        return {
+          status: "failed_restricted",
+          error: "Account is restricted, suspended, or banned. Skipping.",
+        };
+      }
 
-    const handledProviderGate = await handleProviderLoginGate(page, reportStep);
-    if (handledProviderGate) {
-      continue;
-    }
-
-    const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
-    if (handledProviderOnboarding) {
-      continue;
-    }
-
-    const nextEmailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
-    if (nextEmailInput) {
-      reportStep("entering_email", "Entering Google email");
-      const filled = await fillInputResilient(nextEmailInput, email);
-      if (filled) {
-        reportStep("submitting_email", "Submitting email");
-        await page.waitForTimeout(500 + Math.floor(Math.random() * 500));
-        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
-        // Navigation guard: wait for URL to leave /identifier? path so the
-        // loop does not re-detect the stale email input and re-submit.
-        try {
-          await page.waitForURL((url) => !url.toString().includes("/identifier?"), { timeout: 10_000 });
-        } catch {
-          // Page didn't navigate; the loop will handle retry.
+      if (includesAny(text, MANUAL_ASSIST_MARKERS)) {
+        // Check if this is a Shumei slider captcha — auto-solve if possible
+        await page.waitForLoadState("domcontentloaded").catch(() => null);
+        const isShumeiCaptcha = await page.locator(".shumei_captcha_wrapper").first().isVisible({ timeout: 1_500 }).catch(() => false);
+        if (isShumeiCaptcha) {
+          reportStep("detected_shumei_captcha", "Shumei slider captcha detected on Google login — attempting auto-solve");
+          const solved = await solveShumeiCaptcha(page, { timeout: 10_000 });
+          if (solved) {
+            reportStep("solved_shumei_captcha", "Shumei slider captcha solved automatically — continuing login");
+            continue;
+          }
+          reportStep("failed_shumei_captcha", "Shumei auto-solve failed — falling back to manual assist");
+        } else {
+          reportStep("no_shumei_captcha", "No Shumei captcha — falling back to manual assist for other challenge type");
         }
-        await page.waitForTimeout(2000);
-      } else {
-        reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
+        reportStep("manual_assist_required", "Google requested CAPTCHA, 2FA, or recovery verification");
+        return {
+          status: "needs_manual",
+          error: "Manual assist required in the browser session (CAPTCHA, 2FA, recovery, or suspicious-login challenge).",
+        };
       }
-      continue;
-    }
 
-    const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
-    if (passwordInput) {
-      reportStep("entering_password", "Entering Google password");
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 800));
-      await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
-      await page.waitForTimeout(200 + Math.floor(Math.random() * 400));
-      const filled = await fillInputResilient(passwordInput, password);
-      if (filled) {
-        reportStep("submitting_password", "Submitting password");
-        await page.waitForTimeout(400 + Math.floor(Math.random() * 600));
-        await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
-      } else {
-        reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
+      const handledOnboarding = await handleGoogleOnboarding(page, text);
+      if (handledOnboarding) {
+        reportStep("google_onboarding", "Accepted Google onboarding or privacy prompt");
+        continue;
       }
-      try {
-        await page.waitForURL((url) => !url.toString().includes("/challenge/pwd?"), { timeout: 10_000 });
-      } catch {}
-      await page.waitForTimeout(2000);
-      continue;
-    }
 
-    const clickedApprove = await clickFirstVisible(page, APPROVE_BUTTON_SELECTORS);
-    if (clickedApprove) {
-      reportStep("approving_consent", `Approving Google or ${serviceLabel} consent`);
+      const handledProviderOnboarding = await handleProviderOnboarding(page, reportStep, serviceLabel);
+      if (handledProviderOnboarding) {
+        continue;
+      }
+
+      const nextEmailInput = await getFirstVisibleLocator(page, EMAIL_INPUT_SELECTOR);
+      if (nextEmailInput) {
+        reportStep("entering_email", "Entering Google email");
+        const filled = await fillInputResilient(nextEmailInput, email);
+        if (filled) {
+          reportStep("submitting_email", "Submitting email");
+          await page.waitForTimeout(200 + Math.floor(Math.random() * 200));
+          await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+          // Wait for password field or URL change — poll instead of fixed 2s.
+          await waitForNextStep(page, {
+            baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+            targetSelectors: [PASSWORD_INPUT_SELECTOR],
+            timeoutMs: 10_000,
+          });
+        } else {
+          reportStep("email_fill_failed", "Could not fill the Google email field; retrying loop");
+        }
+        continue;
+      }
+
+      const passwordInput = await getFirstVisibleLocator(page, PASSWORD_INPUT_SELECTOR);
+      if (passwordInput) {
+        reportStep("entering_password", "Entering Google password");
+        await page.waitForTimeout(200 + Math.floor(Math.random() * 300));
+        await page.mouse.move(100 + Math.floor(Math.random() * 400), 200 + Math.floor(Math.random() * 300));
+        await page.waitForTimeout(100 + Math.floor(Math.random() * 200));
+        const filled = await fillInputResilient(passwordInput, password);
+        if (filled) {
+          reportStep("submitting_password", "Submitting password");
+          await page.waitForTimeout(200 + Math.floor(Math.random() * 300));
+          await clickFirstVisible(page, NEXT_BUTTON_SELECTORS);
+        } else {
+          reportStep("password_fill_failed", "Could not fill the Google password field; retrying loop");
+        }
+        // Wait for URL change (consent page, re-verify, or Z.ai authorize redirect) — poll instead of 2s fixed.
+        await waitForNextStep(page, {
+          baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+          targetSelectors: [
+            APPROVE_BUTTON_SELECTORS[0],
+            ...APPROVE_BUTTON_SELECTORS.slice(1, 3),
+            ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(0, 6),
+            ...TERMS_CHECKBOX_SELECTORS.slice(0, 4),
+            '#agree-policy-account',
+            'button:has-text("Continue"):not([disabled])',
+            'button:has-text("Confirm")',
+            ...GOOGLE_LOGIN_BUTTON_SELECTORS.slice(6, 14),
+          ],
+          timeoutMs: 10_000,
+        });
+        continue;
+      }
+
+      const clickedApprove = await clickFirstVisible(page, APPROVE_BUTTON_SELECTORS);
+      if (clickedApprove) {
+        reportStep("approving_consent", `Approving Google or ${serviceLabel} consent`);
+        // Wait for URL change after consent — poll instead of 700ms fixed.
+        await waitForNextStep(page, {
+          baselineUrl: (() => { try { return page.url(); } catch { return ""; } })(),
+          timeoutMs: 5_000,
+        });
+        continue;
+      }
+
+      reportStep("waiting_for_next_screen", `Waiting for the next Google or ${serviceLabel} screen`);
       await page.waitForTimeout(700);
-      continue;
+    } catch (loopError) {
+      // Page/context/browser closed (proxy drop, OOM, crash). Don't crash the
+      // worker — return needs_manual so the user can retry or finish manually.
+      const msg = (loopError.message || String(loopError)).toLowerCase();
+      if (msg.includes("closed") || msg.includes("destroyed") || msg.includes("target page") || msg.includes("browser has been closed")) {
+        reportStep("manual_assist_required", `Browser session interrupted: ${(loopError.message || "").slice(0, 100)}`);
+        return {
+          status: "needs_manual",
+          error: `Browser session was interrupted (page/context closed). ${(loopError.message || "").slice(0, 120)}`,
+        };
+      }
+      // Other errors — re-throw to let the worker catch handle it.
+      throw loopError;
     }
-
-    reportStep("waiting_for_next_screen", `Waiting for the next Google or ${serviceLabel} screen`);
-    await page.waitForTimeout(700);
   }
 
   reportStep("manual_assist_required", `Flow did not complete ${serviceLabel} authorization automatically`);

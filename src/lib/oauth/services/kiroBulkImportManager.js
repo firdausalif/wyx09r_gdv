@@ -279,10 +279,24 @@ function normalizeProxyUrls(proxyUrl, proxyUrls) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+export function randomizeProxySessionId(proxyUrl) {
+  if (!proxyUrl) return proxyUrl;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!parsed.username || !/sid-[a-zA-Z0-9_]+/i.test(parsed.username)) return proxyUrl;
+    parsed.username = parsed.username.replace(/sid-[a-zA-Z0-9_]+/i, `sid-${randomUUID().replaceAll("-", "").slice(0, 10)}`);
+    return parsed.toString();
+  } catch {
+    return proxyUrl;
+  }
+}
+
 function resolveWorkerProxyUrl(job, workerId) {
   const proxyUrls = Array.isArray(job.proxyUrls) ? job.proxyUrls : [];
-  if (proxyUrls.length > 1) return proxyUrls[(Math.max(1, workerId) - 1) % proxyUrls.length];
-  return job.proxyUrl || proxyUrls[0] || null;
+  const proxyUrl = proxyUrls.length > 1
+    ? proxyUrls[(Math.max(1, workerId) - 1) % proxyUrls.length]
+    : (job.proxyUrl || proxyUrls[0] || null);
+  return job.randomizeProxySession ? randomizeProxySessionId(proxyUrl) : proxyUrl;
 }
 
 async function defaultSocialExchange(args) {
@@ -290,13 +304,38 @@ async function defaultSocialExchange(args) {
   return exchangeAndSaveKiroSocialConnection(args);
 }
 
+// Proxy-friendly default timeouts. Playwright defaults are 30s for both, which
+// is too short when routing through SOCKS5/HTTP proxies (residential rotating
+// proxies can take 5-10s per new connection just for the handshake). These
+// apply to EVERY page created from this context, so all bulk automation
+// providers (Kiro, CodeBuddy, AutoClaw, Qoder, Cloudflare) inherit them.
+//
+// - navigationTimeout: page.goto(), page.goBack(), page.goForward(),
+//   page.reload(), page.waitForURL(), page.waitForLoadState()
+// - defaultTimeout: page.waitForSelector(), page.click(), page.fill(),
+//   locator.isVisible(), etc. (any auto-waiting assertion)
+//
+// Individual call sites can still pass a shorter `timeout` option to override
+// these for fast-fail cases (e.g. "wrong password" detection).
+const BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS = 120_000; // 2 minutes
+const BULK_IMPORT_DEFAULT_TIMEOUT_MS = 60_000; // 1 minute
+
 export async function createFreshContext(browser, { locale = "en-US" } = {}) {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     viewport: { width: 1280, height: 800 },
     locale,
+    // Context-level defaults — inherited by every page created from this context.
+    // Playwright supports these in BrowserContextOptions since v1.x.
+    defaultNavigationTimeout: BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS,
+    defaultTimeout: BULK_IMPORT_DEFAULT_TIMEOUT_MS,
   });
   const page = await context.newPage();
+  // Belt-and-suspenders: also set on the page directly so any code that creates
+  // additional pages from the same context via context.newPage() still benefits
+  // if the context-level defaults were stripped by a Playwright version quirk.
+  page.setDefaultNavigationTimeout(BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS);
+  page.setDefaultTimeout(BULK_IMPORT_DEFAULT_TIMEOUT_MS);
   return { context, page };
 }
 
@@ -344,6 +383,10 @@ async function relaunchAsHeaded(account) {
     newContext = await newBrowser.newContext({
       viewport: null,
       ...(storageState ? { storageState } : {}),
+      // Match the proxy-friendly defaults from createFreshContext so manual
+      // assist sessions (CAPTCHA, 2FA) don't time out on slow proxies either.
+      defaultNavigationTimeout: BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS,
+      defaultTimeout: BULK_IMPORT_DEFAULT_TIMEOUT_MS,
     });
   } catch {
     await newBrowser.close().catch(() => null);
@@ -351,6 +394,8 @@ async function relaunchAsHeaded(account) {
   }
 
   const newPage = await newContext.newPage();
+  newPage.setDefaultNavigationTimeout(BULK_IMPORT_DEFAULT_NAVIGATION_TIMEOUT_MS);
+  newPage.setDefaultTimeout(BULK_IMPORT_DEFAULT_TIMEOUT_MS);
   if (lastUrl) {
     try {
       await newPage.goto(lastUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
@@ -507,7 +552,7 @@ export class KiroBulkImportManager {
     this.latestJobId = readPersistedLatestJobId(this.metaFile);
   }
 
-  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, headless, jobFields }) {
+  async startJob({ accounts, concurrency, engine, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, randomizeProxySession, headless, jobFields }) {
     const { parsed, invalidLines } = parseKiroBulkAccounts(accounts);
     if (!parsed.length) {
       const error = invalidLines.length > 0
@@ -539,6 +584,7 @@ export class KiroBulkImportManager {
       proxyMode: proxyMode || (resolvedProxyUrls.length > 1 ? "round-robin" : (resolvedProxyUrls.length === 1 ? "single" : "none")),
       proxyPoolId: proxyPoolId || null,
       proxySource: proxySource || null,
+      randomizeProxySession: Boolean(randomizeProxySession),
       createdAt,
       startedAt: createdAt,
       finishedAt: null,
@@ -1010,8 +1056,9 @@ export class KiroBulkImportManager {
     try {
       const useWorkerBrowsers = Array.isArray(job.proxyUrls) && job.proxyUrls.length > 1;
       if (!useWorkerBrowsers) {
-        job.browser = await this.browserLauncher(job);
-        job.browser.__ninerouterProxyUrl = job.proxyUrl || null;
+        const proxyUrl = resolveWorkerProxyUrl(job, 1);
+        job.browser = await this.browserLauncher({ ...job, proxyUrl });
+        job.browser.__ninerouterProxyUrl = proxyUrl || null;
       }
       job.accounts.forEach((account) => {
         if (account.status === "queued" && (account.logs || []).length === 1) {

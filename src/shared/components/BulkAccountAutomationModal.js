@@ -102,21 +102,49 @@ export default function BulkAccountAutomationModal({
   serviceName,
 }) {
   const storageKey = `${provider}-bulk-import-active-job`;
+  const configStorageKey = `${provider}-bulk-import-config`;
   const completedRefreshJobsRef = useRef(new Set());
+
+  // Load cached config from localStorage on first render. This preserves the
+  // user's engine/proxy/concurrency choices across modal open/close cycles so
+  // they don't have to reconfigure every time.
+  const cachedConfig = useMemo(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(configStorageKey);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }, [configStorageKey]);
+
   const [bulkText, setBulkText] = useState("");
-  const [concurrency, setConcurrency] = useState(String(DEFAULT_CONCURRENCY));
-  const [autoConcurrency, setAutoConcurrency] = useState(true);
+  const [concurrency, setConcurrency] = useState(String(cachedConfig.concurrency ?? DEFAULT_CONCURRENCY));
+  const [autoConcurrency, setAutoConcurrency] = useState(cachedConfig.autoConcurrency ?? true);
   const [systemSpecInfo, setSystemSpecInfo] = useState(null);
   const [systemSpecLoading, setSystemSpecLoading] = useState(false);
-  const [engine, setEngine] = useState(DEFAULT_ENGINE);
-  const [headless, setHeadless] = useState(false);
-  const [proxyPoolId, setProxyPoolId] = useState("");
-  const [proxyUrl, setProxyUrl] = useState("");
+  const [engine, setEngine] = useState(cachedConfig.engine ?? DEFAULT_ENGINE);
+  const [headless, setHeadless] = useState(cachedConfig.headless ?? false);
+  const [proxyPoolId, setProxyPoolId] = useState(cachedConfig.proxyPoolId ?? "");
+  const [proxyUrl, setProxyUrl] = useState(cachedConfig.proxyUrl ?? "");
+  const [randomizeProxySession, setRandomizeProxySession] = useState(cachedConfig.randomizeProxySession ?? false);
   const [proxyPools, setProxyPools] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
   const [jobRestoreNotice, setJobRestoreNotice] = useState(null);
+
+  // Persist config to localStorage whenever it changes. Debounce via
+  // useEffect so we only write once per render cycle.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const config = { engine, headless, proxyPoolId, proxyUrl, randomizeProxySession, autoConcurrency, concurrency };
+      window.localStorage.setItem(configStorageKey, JSON.stringify(config));
+    } catch {
+      // localStorage might be full or disabled — ignore
+    }
+  }, [configStorageKey, engine, headless, proxyPoolId, proxyUrl, randomizeProxySession, autoConcurrency, concurrency]);
 
   const runningJob = activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status);
   const finishedJob = activeJob && TERMINAL_JOB_STATUSES.has(activeJob.status);
@@ -137,10 +165,6 @@ export default function BulkAccountAutomationModal({
 
   const resetState = useCallback(() => {
     setBulkText("");
-    setConcurrency(String(DEFAULT_CONCURRENCY));
-    setAutoConcurrency(true);
-    setProxyPoolId("");
-    setProxyUrl("");
     setActiveJob(null);
     setError(null);
     setImporting(false);
@@ -316,6 +340,7 @@ export default function BulkAccountAutomationModal({
       } else if (proxyUrl.trim()) {
         postBody.proxyUrl = proxyUrl.trim();
       }
+      postBody.randomizeProxySession = randomizeProxySession;
       const res = await fetch(`/api/oauth/${provider}/bulk-import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -520,6 +545,15 @@ export default function BulkAccountAutomationModal({
                     disabled={Boolean(proxyPoolId)}
                     placeholder="http://user:pass@host:port"
                   />
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={randomizeProxySession}
+                      onChange={(event) => setRandomizeProxySession(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border"
+                    />
+                    <span>Randomize proxy session ID on launch (changes <code className="rounded bg-sidebar px-1">sid-*</code> when present).</span>
+                  </label>
                 </div>
               </div>
               <p className="mt-1 text-xs text-text-muted">

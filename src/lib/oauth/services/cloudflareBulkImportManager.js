@@ -4,6 +4,7 @@ import {
   createFreshContext,
   buildLookupResponse,
   parseKiroBulkAccounts,
+  randomizeProxySessionId,
   stopCdpScreencast,
 } from "./kiroBulkImportManager.js";
 import { runGoogleAccountAutomation } from "./googleAutomation.js";
@@ -131,7 +132,10 @@ async function saveCloudflareConnection({ token, accountId, name, workerAi }) {
 
 async function defaultBrowserLauncher(job) {
   const { launchBulkImportBrowser } = await import("./bulkImportBrowserEngine.js");
-  return launchBulkImportBrowser({ engine: job?.engine || "cloakbrowser", proxyUrl: job?.proxyUrl || undefined, headless: job?.headless ?? false });
+  const proxyUrl = job?.randomizeProxySession ? randomizeProxySessionId(job?.proxyUrl) : job?.proxyUrl;
+  const browser = await launchBulkImportBrowser({ engine: job?.engine || "cloakbrowser", proxyUrl: proxyUrl || undefined, headless: job?.headless ?? false });
+  browser.__ninerouterProxyUrl = proxyUrl || null;
+  return browser;
 }
 
 async function fillFirst(page, selectors, value) {
@@ -597,7 +601,7 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
     });
   }
 
-  async startJob({ accounts, concurrency, engine, headless, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, jobFields }) {
+  async startJob({ accounts, concurrency, engine, headless, proxyUrl, proxyUrls, proxyMode, proxyPoolId, proxySource, randomizeProxySession, jobFields }) {
     const { parsed, invalidLines } = parseCloudflareBulkAccounts(accounts);
     if (!parsed.length || invalidLines.length) {
       const error = "Invalid Cloudflare format. Use email:password, email|password|optionalAccountId, apiToken|accountId|optionalName, or JSON.";
@@ -613,6 +617,7 @@ export class CloudflareBulkImportManager extends KiroBulkImportManager {
       proxyMode,
       proxyPoolId,
       proxySource,
+      randomizeProxySession,
       jobFields: {
         ...(jobFields || {}),
         accountsMeta: parsed,

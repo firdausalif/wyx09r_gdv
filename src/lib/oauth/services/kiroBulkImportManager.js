@@ -652,9 +652,24 @@ export class KiroBulkImportManager {
     return null;
   }
 
-  cancelJob(jobId) {
+  async cancelJob(jobId) {
     const job = this.jobs.get(jobId);
-    if (!job) return readJsonFile(getJobFile(jobId, this.storageDir));
+    if (!job) {
+      const snapshot = readJsonFile(getJobFile(jobId, this.storageDir));
+      if (!snapshot || !ACTIVE_JOB_STATUSES.has(snapshot.status)) return snapshot;
+
+      const cancelledAt = nowIso();
+      snapshot.status = "cancelled";
+      snapshot.finishedAt = snapshot.finishedAt || cancelledAt;
+      snapshot.error = "Job cancelled";
+      snapshot.accounts = (snapshot.accounts || []).map((account) => (
+        ACTIVE_JOB_STATUSES.has(account.status)
+          ? { ...account, status: "cancelled", error: "Job cancelled", updatedAt: cancelledAt }
+          : account
+      ));
+      writeJsonFile(getJobFile(jobId, this.storageDir), snapshot);
+      return snapshot;
+    }
 
     job.cancelRequested = true;
     if (job.status === "queued") {
@@ -676,7 +691,7 @@ export class KiroBulkImportManager {
       job.workerBrowsers.clear();
     }
 
-    void this.persistJobSnapshot(job, { forcePreview: true });
+    await this.persistJobSnapshot(job, { forcePreview: true });
 
     return sanitizeJob(job);
   }
